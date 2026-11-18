@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════════════════════════
+#  SEGRETI — MAI committare
+# ═══════════════════════════════════════════════════════════════
+.env.shared
+.env.backup
+**/.env
+.env.*
+# Template DA commitare (l'ultima regola che matcha vince)
+!**/.env.example
+!**/.env.*.example
+# materiale crittografico / wallet
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*
+secrets/
+credentials*
+
+# ═══════════════════════════════════════════════════════════════
+#  IP — strategie custom NON versionate, ma tooling ricerca SÌ
+#  NB: "shared/local/" (dir esclusa) impedirebbe di re-includere
+#  qualsiasi figlio. Usiamo "/*" + negazione per salvare sviluppo/.
+# ═══════════════════════════════════════════════════════════════
+shared/local/*
+!shared/local/sviluppo/
+# output di ricerca (dati/log) fuori dal repo, script dentro
+shared/local/sviluppo/*.csv
+shared/local/sviluppo/log_*.txt
+
+# ═══════════════════════════════════════════════════════════════
+#  CONFIG BOT (produzione ignorata; template *.example.json versionati)
+# ═══════════════════════════════════════════════════════════════
+bot*/user_data/*.json
+bot*/user_data/**/*.json
+!bot*/user_data/*.example.json
+!bot*/user_data/**/*.example.json
+
+# ═══════════════════════════════════════════════════════════════
+#  DATABASE
+# ═══════════════════════════════════════════════════════════════
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite-journal
+**/*.sqlite-wal
+**/*.sqlite-shm
+
+# ═══════════════════════════════════════════════════════════════
+#  DATI, LOG, CACHE, RUNTIME IPC
+# ═══════════════════════════════════════════════════════════════
+**/user_data/data/
+**/user_data/logs/
+**/user_data/backtest_results/
+**/user_data/hyperopt_results/
+**/klines_cache/
+**/*.pkl
+**/*.fthypt
+**/*.feather
+backups/
+**/*.log
+# runtime ftcache/ftpairlist: socket, lock, pid, ratelimit.json
+shared/run/
+shared/cache/
+*.sock
+
+# ═══════════════════════════════════════════════════════════════
+#  REPO ESTERNE (clonate separatamente, non vendorate qui)
+# ═══════════════════════════════════════════════════════════════
+shared/NostalgiaForInfinity/
+freqtrade-ultimate/
+
+# ═══════════════════════════════════════════════════════════════
+#  PYTHON
+# ═══════════════════════════════════════════════════════════════
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ═══════════════════════════════════════════════════════════════
+#  RUNTIME / PID / LOCK
+# ═══════════════════════════════════════════════════════════════
+*.pid
+*.seed
+*.pid.lock
+
+# ═══════════════════════════════════════════════════════════════
+#  DIRENV
+# ═══════════════════════════════════════════════════════════════
+.envrc
+.direnv/
+
+# ═══════════════════════════════════════════════════════════════
+#  IDE E OS
+# ═══════════════════════════════════════════════════════════════
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ═══════════════════════════════════════════════════════════════
+#  BACKUP / TEMP / ARCHIVI
+# ═══════════════════════════════════════════════════════════════
+*.bak
+*.tmp
+*.backup
+*.orig
+*.zip
+*.tar.gz
