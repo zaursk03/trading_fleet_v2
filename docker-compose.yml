@@ -1,0 +1,145 @@
+name: trading-fleet
+
+# ═══════════════════════════════════════════════════════════════
+#  Trading Fleet — Freqtrade Ultimate multi-bot
+#  Due magazzini dati, NON confonderli:
+#    · bundle ricerca  = ./freqtrade-ultimate/user_data/data  (git-tracked nel fork; backtest/hyperopt/replay)
+#    · cache live      = persistence ftcache (container-local o shared/cache); mai il bundle
+#  Runtime IPC (socket/lock/pid/ratelimit) = ./shared/run → /ftcache, separato dalle strategie.
+# ═══════════════════════════════════════════════════════════════
+
+x-defaults: &defaults
+  restart: unless-stopped
+  stop_grace_period: 60s
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+  healthcheck:
+    test: ["CMD", "curl", "-f", "-s", "-o", "/dev/null", "http://127.0.0.1:8080/api/v1/ping"]
+    interval: 60s
+    timeout: 10s
+    retries: 3
+    start_period: 120s
+
+services:
+
+  # ── Daemon OHLCV condiviso: UN solo rate-budget per wallet ──
+  # Non è un bot: niente porte, niente API, niente segreti.
+  # I bot sono client puri → spegnerne uno non uccide mai il daemon.
+  srv-ftcache:
+    <<: *defaults
+    image: freqtrade-ultimate:latest
+    container_name: ftcache
+    stop_grace_period: 30s
+    entrypoint: ["python", "-m", "freqtrade.ohlcv_cache.daemon"]
+    command: ["--socket", "/ftcache/ftcache.sock"]   # ← conferma i flag con: python -m freqtrade.ohlcv_cache.daemon --help
+    volumes:
+      - ./shared/run:/ftcache:rw
+    healthcheck:
+      test: ["CMD", "python", "-m", "freqtrade.ohlcv_cache.healthcheck", "--socket", "/ftcache/ftcache.sock"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Daemon pairlist (OPZIONALE): abilita quando confermi la chiave config ──
+  # "offline" dopo 15 min idle è NORMALE (IDLE_SHUTDOWN_S=900), non un guasto.
+  # srv-ftpairlist:
+  #   <<: *defaults
+  #   image: freqtrade-ultimate:latest
+  #   container_name: ftpairlist
+  #   entrypoint: ["python", "-m", "freqtrade.pairlist_cache.daemon"]
+  #   command: ["--socket", "/ftcache/ftpairlist.sock"]
+  #   volumes:
+  #     - ./shared/run:/ftcache:rw
+  #   healthcheck:
+  #     test: ["CMD", "python", "-m", "freqtrade.ohlcv_cache.healthcheck", "--pairlist", "--socket", "/ftcache/ftpairlist.sock"]
+  #     interval: 60s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
+
+  # ── BOT 1 · NFI X7 · DRY-RUN ──
+  # ⚠ NFI ha lookahead bias documentato: le sue metriche NON sono evidenza credibile.
+  srv-bot1:
+    <<: *defaults
+    image: freqtrade-ultimate:latest
+    container_name: bot1
+    env_file:
+      - .env.shared
+      - ./bot1/.env
+    depends_on:
+      srv-ftcache: { condition: service_healthy }
+    volumes:
+      - ./bot1/user_data:/freqtrade/user_data
+      - ./shared/NostalgiaForInfinity:/nfi-repo:ro
+      - ./shared/run:/ftcache:rw
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+    ports:
+      - "127.0.0.1:8081:8080"
+    command: >
+      trade
+      --config /freqtrade/user_data/config.json
+      --strategy NostalgiaForInfinityX7
+
+  # ── BOT 2 · RubberBandMeanRev · LIVE ⚠ ──
+  # /local read-only in live. Sizing/tbr ancora da validare (#15/#182): non modificare alla cieca.
+  srv-bot2:
+    <<: *defaults
+    image: freqtrade-ultimate:latest
+    container_name: bot2
+    env_file:
+      - .env.shared
+      - ./bot2/.env
+    depends_on:
+      srv-ftcache: { condition: service_healthy }
+    volumes:
+      - ./bot2/user_data:/freqtrade/user_data
+      - ./shared/local:/local:ro
+      - ./shared/run:/ftcache:rw
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+    ports:
+      - "127.0.0.1:8082:8080"
+    command: >
+      trade
+      --config /freqtrade/user_data/config.json
+      --strategy RubberBandMeanRev6253
+
+  # ── BOT 3 · dev / ricerca · DRY-RUN ──
+  # /local read-write: è il servizio per sviluppo, download-data, backtest, replay.
+  srv-bot3:
+    <<: *defaults
+    image: freqtrade-ultimate:latest
+    container_name: bot3
+    env_file:
+      - .env.shared
+      - ./bot3/.env
+    depends_on:
+      srv-ftcache: { condition: service_healthy }
+    volumes:
+      - ./bot3/user_data:/freqtrade/user_data
+      - ./shared/local:/local:rw
+      - ./shared/run:/ftcache:rw
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+    ports:
+      - "127.0.0.1:8083:8080"
+    command: >
+      trade
+      --config /freqtrade/user_data/config.json
+      --strategy MomentumReversalStrategy
+
+  # ── TEMPLATE nuovo bot (copia, rinomina, porta 808N) ──
+  # srv-botN:
+  #   <<: *defaults
+  #   image: freqtrade-ultimate:latest
+  #   container_name: botN
+  #   env_file: [.env.shared, ./botN/.env]
+  #   depends_on: { srv-ftcache: { condition: service_healthy } }
+  #   volumes:
+  #     - ./botN/user_data:/freqtrade/user_data
+  #     - ./shared/local:/local:ro        # ro se live, rw se dev
+  #     - ./shared/run:/ftcache:rw
+  #     - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+  #   ports: ["127.0.0.1:808N:8080"]
+  #   command: >
+  #     trade --config /freqtrade/user_data/config.json --strategy <Strategia>
