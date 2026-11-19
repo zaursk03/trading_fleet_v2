@@ -1,0 +1,103 @@
+{
+    "$schema": "https://schema.freqtrade.io/schema.json",
+    "bot_name": "MeanRevDCA15m_bot",
+    "strategy": "RubberBandMeanRev6253",
+    "strategy_path": "/local/RubberBandMeanRev",
+    "user_data_dir": "/freqtrade/user_data",
+    "db_url": "sqlite:////freqtrade/user_data/tradesv3.sqlite",
+
+    // ── RUN MODE ──
+    "initial_state": "running",
+    "dry_run": false,                      // ⚠ LIVE: denaro reale
+    "dry_run_wallet": 500,                 // irrilevante in live, tenuto per rollback dry
+
+    // ── CAPITALE / SIZING ──
+    "max_open_trades": 5,
+    "stake_currency": "USDC",
+    "stake_amount": "unlimited",           // ⚠ #15: richiede guardrail (vedi tbr/withdrawal/cap)
+    "tradable_balance_ratio": 0.99,        // ⚠ #15 FAIL: con unlimited serve 0.3–0.6
+    //"available_capital": 500,            // ⚠ decommenta + dimensiona sul balance reale (ring-fence)
+    "capital_withdrawal": 0,               // ⚠ #15c: nessun prelievo → guardrail mancante
+    "use_custom_stoploss": true,
+    //"position_adjustment_enable": true,  // ⚠ DCA: se RubberBand usa adjust_trade_position questo flag
+                                           //   è OBBLIGATORIO. Ora assente=false → il DCA NON scala.
+                                           //   Abilitarlo con tbr 0.99 può esaurire il margine: decidi prima.
+
+    // ── MERCATO / ESECUZIONE ──
+    "timeframe": "15m",
+    "trading_mode": "futures",
+    "margin_mode": "isolated",
+    "fiat_display_currency": "USD",
+    "unfilledtimeout": { "entry": 15, "exit": 10, "exit_timeout_count": 2, "unit": "minutes" },
+    "entry_pricing": {
+        "price_side": "same", "use_order_book": true, "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": { "enabled": false, "bids_to_ask_delta": 1 }
+    },
+    "exit_pricing": { "price_side": "same", "use_order_book": true, "order_book_top": 1, "price_last_balance": 0.5 },
+    "order_time_in_force": { "entry": "GTC", "exit": "GTC" },
+
+    // ── EXCHANGE ──
+    "exchange": {
+        "name": "hyperliquid",
+        "key": "",
+        "secret": "",
+        "walletAddress": "",               // ⚠ LIVE: valore REALE camelCase QUI. Vuoto=422=bot scoperto.
+        "privateKey": "",                  // ⚠ LIVE: API AGENT reale QUI (no withdraw). Mai in .env.
+        "ccxt_config": {},
+        "ccxt_async_config": {},
+        "pair_whitelist": [],
+        "pair_blacklist": [
+            ".*USDC/USDC.*", ".*USDT/USDC.*", ".*DAI/USDC.*", ".*TUSD/USDC.*",
+            ".*BUSD/USDC.*", ".*EUR/USDC.*", ".*FRAX/USDC.*"
+        ]
+    },
+
+    // ── PAIRLIST (live dinamica; in backtest diventa statica → divergenza #22) ──
+    "pairlists": [
+        { "method": "VolumePairList", "number_assets": 80, "sort_key": "quoteVolume",
+          "min_value": 750000, "refresh_period": 1800 },
+        { "method": "AgeFilter", "min_days_listed": 30 },
+        { "method": "PriceFilter", "low_price_ratio": 0.005 }
+    ],
+
+    // ── RISCHIO / COORDINAMENTO ──
+    "position_coordination": { "mode": "strict", "scope": "wallet", "leverage_policy": "cap", "exchange_check": "warn" },
+
+    // ── CACHE CONDIVISA (nome unificato flotta) ──
+    "shared_ohlcv_cache": { "enabled": true, "socket_path": "/ftcache/ftcache.sock" },
+
+    // ── TELEGRAM (token/chat_id dalle env) ──
+    "telegram": {
+        "enabled": true, "token": "", "chat_id": "",
+        "keyboard": [
+            ["/status table", "/count", "/balance"],
+            ["/profit", "/daily", "/performance"],
+            ["/whitelist", "/locks", "/show_config"],
+            ["/forceexit", "/stopentry", "/reload_config"]
+        ],
+        "notification_settings": {
+            "status": "on", "warning": "on", "startup": "on",
+            "entry": "on", "exit": "on", "entry_fill": "on", "exit_fill": "on",
+            "entry_cancel": "on", "exit_cancel": "on",
+            "protection_trigger": "on", "protection_trigger_global": "on"
+        }
+    },
+
+    // ── API SERVER (credenziali dalle env; mai vuote a runtime) ──
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "0.0.0.0",
+        "listen_port": 8080,
+        "verbosity": "info",
+        "enable_openapi": false,
+        "jwt_secret_key": "", "ws_token": "", "username": "", "password": "",
+        "CORS_origins": [
+            "https://instance-2026sep.tail57ff4c.ts.net",
+            "https://instance-2026sep.tail57ff4c.ts.net:8443",
+            "https://instance-2026sep.tail57ff4c.ts.net:9443"
+        ]
+    },
+
+    "internals": { "process_throttle_secs": 15, "heartbeat_interval": 60 }
+}
