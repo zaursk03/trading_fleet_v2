@@ -1,13 +1,9 @@
 name: trading-fleet
 
 # ═══════════════════════════════════════════════════════════════
-#  Trading Fleet — Freqtrade Ultimate multi-bot
-#  Due magazzini dati, NON confonderli:
-#    · bundle ricerca = ./freqtrade-ultimate/user_data/data (git-tracked nel fork; backtest/hyperopt/replay)
-#    · cache live     = persistence ftcache (container-local o shared/cache); mai il bundle
-#  Runtime IPC (socket/lock/pid/ratelimit) = ./shared/run → /ftcache, separato dalle strategie.
-#  Ciclo di vita: srv-dev = runner di ricerca (MAI live); i live sono servizi separati con DB vergine.
-#  Strategie/code preliminari = shared/local/sviluppo (rw su dev, versionato); live leggono /local:ro.
+#  Due magazzini: bundle ricerca (git-tracked nel fork) vs cache live (ftcache).
+#  Runtime IPC = ./shared/run → /ftcache. Dev = runner (MAI live); live = servizi separati, DB vergine.
+#  Ricerca versionata = shared/local/sviluppo; runtime dev ignorato = dev/user_data.
 # ═══════════════════════════════════════════════════════════════
 
 x-defaults: &defaults
@@ -25,9 +21,7 @@ x-defaults: &defaults
 
 services:
 
-  # ── Daemon OHLCV condiviso: UN solo rate-budget per wallet ──
-  # Non è un bot: niente porte, niente API, niente segreti.
-  # I bot sono client puri → spegnerne uno non uccide mai il daemon.
+  # ── Daemon OHLCV condiviso: un solo rate-budget per wallet ──
   srv-ftcache:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -44,8 +38,7 @@ services:
       retries: 3
       start_period: 30s
 
-  # ── Daemon pairlist (OPZIONALE): abilita quando confermi la chiave config ──
-  # "offline" dopo 15 min idle è NORMALE (IDLE_SHUTDOWN_S=900), non un guasto.
+  # ── Daemon pairlist (OPZIONALE) ──
   # srv-ftpairlist:
   #   <<: *defaults
   #   image: freqtrade-ultimate:latest
@@ -61,8 +54,29 @@ services:
   #     retries: 3
   #     start_period: 30s
 
-  # ── BOT 1 · NFI X7 · DRY-RUN ──
-  # ⚠ NFI ha lookahead bias documentato: le sue metriche NON sono evidenza credibile.
+  # ── DEV / RICERCA · runner dedicato · MAI live · prima dei bot ──
+  # Config+strategie+codice = /local/sviluppo (versionato). DB/output = dev/user_data (ignorato).
+  # Non è un demone: command placeholder esce subito; task via `run --rm`.
+  srv-dev:
+    image: freqtrade-ultimate:latest
+    container_name: dev
+    restart: "no"
+    healthcheck: { disable: true }
+    env_file:
+      - .env.shared
+      - ./dev/.env                    # NO chiavi live
+    depends_on:
+      srv-ftcache: { condition: service_healthy }
+    volumes:
+      - ./dev/user_data:/freqtrade/user_data
+      - ./shared/local:/local:rw
+      - ./shared/run:/ftcache:rw
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+    cpus: 1.0
+    mem_limit: 4g
+    command: ["--help"]
+
+  # ── BOT 1 · NFI X7 · DRY-RUN (metriche non credibili: lookahead) ──
   srv-bot1:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -84,9 +98,7 @@ services:
       --config /freqtrade/user_data/config.json
       --strategy NostalgiaForInfinityX7
 
-  # ── BOT 2 · RubberBandMeanRev · LIVE ⚠ ──
-  # /local read-only in live. Sizing/tbr/leva ancora da validare (#15/#17/#182): non modificare alla cieca.
-  # MAI lanciare `compose run` su questo servizio: spawnerebbe una seconda istanza live (stesso DB/wallet).
+  # ── BOT 2 · RubberBandMeanRev · LIVE ⚠ (mai `compose run` qui) ──
   srv-bot2:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -108,31 +120,7 @@ services:
       --config /freqtrade/user_data/config.json
       --strategy RubberBandMeanRev6253
 
-  # ── DEV / RICERCA · runner dedicato · MAI live ──
-  # Non è un demone: default command esce subito; i task si lanciano con `run --rm`.
-  # DB proprio (./dev/user_data), niente chiavi live, limiti risorse per proteggere i live.
-  # Strategie + codice preliminare: shared/local/sviluppo → /local/sviluppo (rw, versionato).
-  srv-dev:
-    image: freqtrade-ultimate:latest
-    container_name: dev
-    restart: "no"                      # runner, non demone: non deve restare su
-    healthcheck: { disable: true }
-    env_file:
-      - .env.shared
-      - ./dev/.env                     # SENZA chiavi live (dry/pubblico)
-    depends_on:
-      srv-ftcache: { condition: service_healthy }
-    volumes:
-      - ./dev/user_data:/freqtrade/user_data
-      - ./shared/local:/local:rw
-      - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
-    cpus: 1.0                          # protegge i live dalla fame di hyperopt/backtest
-    mem_limit: 4g
-    command: ["--help"]                # placeholder: override con `run --rm srv-dev <cmd>`
-
-  # ── TEMPLATE live futuro (es. SalientFlush al go-live, DOPO i gate) ──
-  # DB vergine, /local:ro, chiavi live SOLO qui. Creare solo quando census/placebo/CPCV/parity/dry passano.
+  # ── TEMPLATE live futuro (SalientFlush al go-live, DOPO i gate; DB vergine) ──
   # srv-bot4:
   #   <<: *defaults
   #   image: freqtrade-ultimate:latest
