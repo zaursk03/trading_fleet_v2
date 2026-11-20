@@ -1,5 +1,3 @@
-## README
-
 ```markdown
 # 🤖 Trading Fleet — Freqtrade Ultimate multi-bot
 
