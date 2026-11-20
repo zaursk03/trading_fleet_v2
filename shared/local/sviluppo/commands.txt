@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════
+#  commands.txt — comandi tipici srv-dev (ricerca) + fleet ops
+#  Tutti i file di ricerca: shared/local/sviluppo/ (flat) → /local/sviluppo/…
+#  base: /local/sviluppo/config-dev.json  (importa /local/sviluppo/experiment.json)
+#  srv-dev = runner: usa `run --rm`. MAI `compose run` su servizi live.
+# ═══════════════════════════════════════════════════════════════
+
+# ── 0 · verify / ispezione ─────────────────────────────────────
+docker compose run --rm srv-dev show-config --config /local/sviluppo/config-dev.json
+docker compose run --rm srv-dev test-pairlist --config /local/sviluppo/config-dev.json -v
+docker compose run --rm srv-dev list-data --config /local/sviluppo/config-dev.json --timeframes 15m
+docker compose run --rm --entrypoint python srv-dev -m freqtrade.ohlcv_cache.healthcheck --socket /ftcache/ftcache.sock
+
+# ── 1 · download-data (bundle; coda LOW dietro i live) ─────────
+# probe 1m (retention): una coppia sola, non alla cieca
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --pairs BTC/USDC:USDC --timeframes 1m --timerange 20261001-
+# backfill profondo (prepend prima dello start esistente)
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h --timerange 20240101- --prepend
+# refresh recente
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h --timerange 20260801-
+# NB: futures mode scarica anche funding 1h + mark. NON disabilitare ftcache.
+
+# ── 2 · coverage / census (gate: N indipendenti >= 100) ────────
+docker compose run --rm --entrypoint python srv-dev /local/sviluppo/00_inventory.py
+docker compose run --rm --entrypoint python srv-dev /local/sviluppo/01_census.py
+
+# ── 3 · backtesting (#20: detail 1m; se assente 5m = ottimista, dichiaralo) ──
+docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801 --timeframe-detail 1m
+# fallback 5m (risultati ottimistici → dichiararlo nel report)
+docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801 --timeframe-detail 5m
+
+# ── 4 · bias check PRIMA di fidarsi del backtest ───────────────
+docker compose run --rm srv-dev lookahead-analysis --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801
+docker compose run --rm srv-dev recursive-analysis --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801
+
+# ── 5 · hyperopt (#14/#38: 200-300 epochs; PlateauSampler; #21: delete .json co-located; #201: no log in strategy) ──
+docker compose run --rm srv-dev hyperopt --config /local/sviluppo/config-dev.json --strategy SalientFlush --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --spaces buy sell roi stoploss --timerange 20240101-20260101
+# NB: niente trailing nativo (#10); loss Calmar/MoutonMeanRev per mean-reversion (#2/#197)
+
+# ── 6 · walk-forward CPCV + PBO (<0.5) + holdout intoccabile (#85/#189) ──
+docker compose run --rm srv-dev walk-forward --config /local/sviluppo/config-dev.json --strategy SalientFlush --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --wf-mode cpcv --wf-cpcv-groups 6 --wf-cpcv-test-groups 2 --wf-embargo-days 3 --wf-holdout-months 2 --timerange 20240101-20260801
+
+# ── 7 · replay (parity live-vs-backtest; MAI per selezionare parametri) ──
+# richiede blocco dry_run_replay nel config dev:
+#   {automatic_launch:true, start_date:"01/01/2026", end_date:"today", resolution:"1m", reset_db:false}
+docker compose run --rm --service-ports srv-dev trade --config /local/sviluppo/config-dev.json --strategy SalientFlush
+
+# ── 8 · plot (opzionale) ──────────────────────────────────────
+docker compose run --rm srv-dev plot-dataframe --config /local/sviluppo/config-dev.json --strategy SalientFlush --pairs BTC/USDC:USDC --timerange 20260101-20260801
+docker compose run --rm srv-dev plot-profit --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801
+
+# ── 9 · fleet ops (bot2 LIVE: mai compose run; logs/backup/kill-switch) ──
+docker logs --tail 100 bot2
+# backup a caldo con Python sqlite3 (WAL-safe; niente sqlite3 CLI nell'immagine)
+docker compose exec -T srv-bot2 python -c "import sqlite3;s=sqlite3.connect('file:/freqtrade/user_data/tradesv3.sqlite?mode=ro',uri=True);d=sqlite3.connect('/freqtrade/user_data/tradesv3-backup.sqlite');s.backup(d);d.close();s.close();print('backup ok')"
+# kill-switch ingressi (lascia gestione posizioni): Telegram /stopentry su bot2
