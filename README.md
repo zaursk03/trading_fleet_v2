@@ -1,4 +1,4 @@
-## README (con passaggi `.example`)
+## README
 
 ```markdown
 # 🤖 Trading Fleet — Freqtrade Ultimate multi-bot
