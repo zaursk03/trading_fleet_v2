@@ -1,0 +1,47 @@
+{
+    "$schema": "https://schema.freqtrade.io/schema.json",
+    "bot_name": "dev_research",
+    "add_config_files": [
+        "/local/sviluppo/experiment.json"
+    ],
+    "strategy_path": "/local/sviluppo",
+    "user_data_dir": "/freqtrade/user_data",
+    "db_url": "sqlite:////freqtrade/user_data/tradesv3-dev.sqlite",
+
+    "dry_run": true,
+    "initial_state": "running",
+    "cancel_open_orders_on_exit": true,
+    "fiat_display_currency": "USD",
+
+    "telegram": {
+        "enabled": false,
+        "token": "", "chat_id": "",
+        "keyboard": [
+            ["/status table", "/count", "/balance"],
+            ["/profit", "/daily", "/performance"],
+            ["/whitelist", "/locks", "/show_config"],
+            ["/forceexit", "/stopentry", "/reload_config"]
+        ],
+        "notification_settings": {
+            "status": "on", "warning": "on", "startup": "on",
+            "entry": "on", "exit": "on", "entry_fill": "on", "exit_fill": "on",
+            "entry_cancel": "on", "exit_cancel": "on",
+            "protection_trigger": "on", "protection_trigger_global": "on"
+        }
+    },
+
+    "api_server": {
+        "enabled": false,
+        "listen_ip_address": "0.0.0.0",
+        "listen_port": 8080,
+        "verbosity": "info",
+        "enable_openapi": false,
+        "jwt_secret_key": "", "ws_token": "",
+        "CORS_origins": [],
+        "username": "", "password": ""
+    },
+
+    "internals": { "process_throttle_secs": 15, "heartbeat_interval": 60 },
+
+    "shared_ohlcv_cache": { "enabled": true, "socket_path": "/ftcache/ftcache.sock" }
+}
