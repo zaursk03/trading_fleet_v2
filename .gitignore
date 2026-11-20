@@ -1,14 +1,10 @@
 # ═══════════════════════════════════════════════════════════════
-#  SEGRETI — MAI committare
+#  SEGRETI / FILE LOCALI — MAI committare (presenti in working tree)
 # ═══════════════════════════════════════════════════════════════
 .env.shared
 .env.backup
 **/.env
 .env.*
-# Template DA commitare (l'ultima regola che matcha vince)
-!**/.env.example
-!**/.env.*.example
-# materiale crittografico / wallet
 *.pem
 *.key
 *.p12
@@ -18,25 +14,15 @@ id_rsa*
 id_ed25519*
 secrets/
 credentials*
+# config reale per-bot: contiene walletAddress/privateKey (camelCase HL).
+# Resta locale con quel nome; git non lo traccia né lo committerà.
+bot*/user_data/config.json
 
 # ═══════════════════════════════════════════════════════════════
-#  IP — strategie custom NON versionate, ma tooling ricerca SÌ
-#  NB: "shared/local/" (dir esclusa) impedirebbe di re-includere
-#  qualsiasi figlio. Usiamo "/*" + negazione per salvare sviluppo/.
+#  RICERCA: script/config/strategie committati; solo OUTPUT ignorati
 # ═══════════════════════════════════════════════════════════════
-shared/local/*
-!shared/local/sviluppo/
-# output di ricerca (dati/log) fuori dal repo, script dentro
 shared/local/sviluppo/*.csv
 shared/local/sviluppo/log_*.txt
-
-# ═══════════════════════════════════════════════════════════════
-#  CONFIG BOT (produzione ignorata; template *.example.json versionati)
-# ═══════════════════════════════════════════════════════════════
-bot*/user_data/*.json
-bot*/user_data/**/*.json
-!bot*/user_data/*.example.json
-!bot*/user_data/**/*.example.json
 
 # ═══════════════════════════════════════════════════════════════
 #  DATABASE
@@ -55,12 +41,12 @@ bot*/user_data/**/*.json
 **/user_data/backtest_results/
 **/user_data/hyperopt_results/
 **/klines_cache/
+dev/user_data/
 **/*.pkl
 **/*.fthypt
 **/*.feather
 backups/
 **/*.log
-# runtime ftcache/ftpairlist: socket, lock, pid, ratelimit.json
 shared/run/
 shared/cache/
 *.sock
