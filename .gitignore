@@ -99,3 +99,8 @@ Thumbs.db
 *.orig
 *.zip
 *.tar.gz
+
+# Template DA commitare (l'ultima regola che matcha vince)
+!**/.env.example
+!**/.env.*.example
+!bot*/user_data/*.example.json
