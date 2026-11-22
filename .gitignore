@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  SEGRETI / FILE LOCALI — MAI committare (presenti in working tree)
+#  1 · SEGRETI / FILE LOCALI — MAI committare (presenti in working tree)
 # ═══════════════════════════════════════════════════════════════
 .env.shared
 .env.backup
@@ -19,13 +19,26 @@ credentials*
 bot*/user_data/config.json
 
 # ═══════════════════════════════════════════════════════════════
-#  RICERCA: script/config/strategie committati; solo OUTPUT ignorati
+#  2 · TEMPLATE DA COMMITTARE (negazioni: l'ultima regola che matcha vince)
+#     Coprono entrambe le convenzioni finché non standardizzi il naming.
+# ═══════════════════════════════════════════════════════════════
+!**/.env.example
+!**/.env.*.example
+!bot*/user_data/*.example.json
+!bot*/user_data/*.json.example
+
+# ═══════════════════════════════════════════════════════════════
+#  3 · RICERCA: script/config/strategie committati; solo OUTPUT ignorati
 # ═══════════════════════════════════════════════════════════════
 shared/local/sviluppo/*.csv
 shared/local/sviluppo/log_*.txt
+# JSON stray (es. params hyperopt co-located): non committare overfit
+shared/local/sviluppo/*.json
+!shared/local/sviluppo/config-dev.json
+!shared/local/sviluppo/experiment.json
 
 # ═══════════════════════════════════════════════════════════════
-#  DATABASE
+#  4 · DATABASE
 # ═══════════════════════════════════════════════════════════════
 **/*.sqlite
 **/*.sqlite3
@@ -34,7 +47,7 @@ shared/local/sviluppo/log_*.txt
 **/*.sqlite-shm
 
 # ═══════════════════════════════════════════════════════════════
-#  DATI, LOG, CACHE, RUNTIME IPC
+#  5 · DATI, LOG, CACHE, RUNTIME IPC
 # ═══════════════════════════════════════════════════════════════
 **/user_data/data/
 **/user_data/logs/
@@ -52,35 +65,38 @@ shared/cache/
 *.sock
 
 # ═══════════════════════════════════════════════════════════════
-#  REPO ESTERNE (clonate separatamente, non vendorate qui)
+#  6 · REPO ESTERNE (clonate separatamente, non vendorate qui)
 # ═══════════════════════════════════════════════════════════════
 shared/NostalgiaForInfinity/
 freqtrade-ultimate/
 
 # ═══════════════════════════════════════════════════════════════
-#  PYTHON
+#  7 · PYTHON / TEST CACHE
 # ═══════════════════════════════════════════════════════════════
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # ═══════════════════════════════════════════════════════════════
-#  RUNTIME / PID / LOCK
+#  8 · RUNTIME / PID / LOCK
 # ═══════════════════════════════════════════════════════════════
 *.pid
 *.seed
 *.pid.lock
 
 # ═══════════════════════════════════════════════════════════════
-#  DIRENV
+#  9 · DIRENV
 # ═══════════════════════════════════════════════════════════════
 .envrc
 .direnv/
 
 # ═══════════════════════════════════════════════════════════════
-#  IDE E OS
+#  10 · IDE E OS
 # ═══════════════════════════════════════════════════════════════
 .DS_Store
 Thumbs.db
@@ -91,7 +107,7 @@ Thumbs.db
 *~
 
 # ═══════════════════════════════════════════════════════════════
-#  BACKUP / TEMP / ARCHIVI
+#  11 · BACKUP / TEMP / ARCHIVI
 # ═══════════════════════════════════════════════════════════════
 *.bak
 *.tmp
@@ -99,8 +115,3 @@ Thumbs.db
 *.orig
 *.zip
 *.tar.gz
-
-# Template DA commitare (l'ultima regola che matcha vince)
-!**/.env.example
-!**/.env.*.example
-!bot*/user_data/*.example.json
