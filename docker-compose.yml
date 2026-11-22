@@ -1,8 +1,9 @@
 name: trading-fleet
 
 # ═══════════════════════════════════════════════════════════════
-#  Due magazzini: bundle ricerca (git-tracked nel fork) vs cache live (ftcache).
-#  Runtime IPC = ./shared/run → /ftcache. Dev = runner (MAI live); live = servizi separati, DB vergine.
+#  Due magazzini: bundle ricerca (git-tracked nel fork, :ro sui live)
+#  vs cache live (ftcache). Runtime IPC = ./shared/run → /ftcache.
+#  Dev = runner (MAI live); live = servizi separati, DB vergine.
 #  Ricerca versionata = shared/local/sviluppo; runtime dev ignorato = dev/user_data.
 # ═══════════════════════════════════════════════════════════════
 
@@ -22,13 +23,17 @@ x-defaults: &defaults
 services:
 
   # ── Daemon OHLCV condiviso: un solo rate-budget per wallet ──
+  # Non è un bot: niente porte, niente API, niente segreti exchange.
+  # I bot sono client puri → spegnerne uno non uccide mai il daemon.
   srv-ftcache:
     <<: *defaults
     image: freqtrade-ultimate:latest
     container_name: ftcache
     stop_grace_period: 30s
+    env_file:
+      - .env.shared            # solo TZ/non-segreti, per log coerenti
     entrypoint: ["python", "-m", "freqtrade.ohlcv_cache.daemon"]
-    command: ["--socket", "/ftcache/ftcache.sock"]
+    command: ["--socket", "/ftcache/ftcache.sock"]   # ← conferma con: python -m freqtrade.ohlcv_cache.daemon --help
     volumes:
       - ./shared/run:/ftcache:rw
     healthcheck:
@@ -38,7 +43,8 @@ services:
       retries: 3
       start_period: 30s
 
-  # ── Daemon pairlist (OPZIONALE) ──
+  # ── Daemon pairlist (OPZIONALE): abilita con >=2 live stessa pairlist dinamica ──
+  # "offline" dopo 15 min idle è NORMALE (IDLE_SHUTDOWN_S=900), non un guasto.
   # srv-ftpairlist:
   #   <<: *defaults
   #   image: freqtrade-ultimate:latest
@@ -57,7 +63,9 @@ services:
   # ── DEV / RICERCA · runner dedicato · MAI live · prima dei bot ──
   # Config+strategie+codice = /local/sviluppo (versionato). DB/output = dev/user_data (ignorato).
   # Non è un demone: command placeholder esce subito; task via `run --rm`.
+  # Eredita logging rotato da defaults; override restart/healthcheck.
   srv-dev:
+    <<: *defaults
     image: freqtrade-ultimate:latest
     container_name: dev
     restart: "no"
@@ -71,12 +79,12 @@ services:
       - ./dev/user_data:/freqtrade/user_data
       - ./shared/local:/local:rw
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
-    cpus: 1.0
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data   # rw: download-data scrive
+    cpus: 1.0                          # protegge i live dalla fame di hyperopt/backtest
     mem_limit: 4g
     command: ["--help"]
 
-  # ── BOT 1 · NFI X7 · DRY-RUN (metriche non credibili: lookahead) ──
+  # ── BOT 1 · NFI X7 · DRY-RUN (metriche non credibili: lookahead bias) ──
   srv-bot1:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -90,7 +98,7 @@ services:
       - ./bot1/user_data:/freqtrade/user_data
       - ./shared/NostalgiaForInfinity:/nfi-repo:ro
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro   # bundle protetto
     ports:
       - "127.0.0.1:8081:8080"
     command: >
@@ -99,6 +107,7 @@ services:
       --strategy NostalgiaForInfinityX7
 
   # ── BOT 2 · RubberBandMeanRev · LIVE ⚠ (mai `compose run` qui) ──
+  # NB: la classe nel file strategia deve chiamarsi RubberBandMeanRev6253.
   srv-bot2:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -112,7 +121,7 @@ services:
       - ./bot2/user_data:/freqtrade/user_data
       - ./shared/local:/local:ro
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro   # bundle protetto
     ports:
       - "127.0.0.1:8082:8080"
     command: >
@@ -120,7 +129,7 @@ services:
       --config /freqtrade/user_data/config.json
       --strategy RubberBandMeanRev6253
 
-  # ── TEMPLATE live futuro (SalientFlush al go-live, DOPO i gate; DB vergine) ──
+  # ── TEMPLATE live futuro (go-live DOPO i gate; DB vergine; mount :ro) ──
   # srv-bot4:
   #   <<: *defaults
   #   image: freqtrade-ultimate:latest
@@ -131,7 +140,7 @@ services:
   #     - ./bot4/user_data:/freqtrade/user_data
   #     - ./shared/local:/local:ro
   #     - ./shared/run:/ftcache:rw
-  #     - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+  #     - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro
   #   ports: ["127.0.0.1:8084:8080"]
   #   command: >
-  #     trade --config /freqtrade/user_data/config.json --strategy SalientFlush
+  #     trade --config /freqtrade/user_data/config.json --strategy <Strategia>
