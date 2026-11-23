@@ -4,7 +4,7 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 (config + DB separati) e accesso remoto **solo via Tailscale**.
 
 **Repo privata.** Versiona: infra, strategie, template `.example`, tooling.
-**Non** versiona: file reali con segreti (`config.json`, `.env`), DB, log, runtime IPC.
+**Non** versiona: file reali con segreti (`config.json`, `.env`), DB, log, runtime IPC, artifact UI.
 
 > ⚠️ **Disclaimer**: software educativo. Il trading di criptovalute può portare alla perdita totale
 > del capitale. Usa a tuo rischio.
@@ -24,13 +24,17 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 | `srv-botN` | Bot live o dry-run | Uno per servizio; config e DB isolati |
 | `srv-dev` | Runner usa-e-getta (download/backtest/replay) | Mai live; niente porte; limiti CPU/RAM |
 
-- **ftcache**: socket **unica stringa** `/ftcache/ftcache.sock` in compose (`command` + `healthcheck`
-  di `srv-ftcache`), config di ogni bot e config dev. Se anche un punto diverge → due daemon e budget
-  dimezzato (split-brain). I bot hanno `depends_on: srv-ftcache {condition: service_healthy}`: se il
-  daemon non parte, i bot restano in attesa.
-- **srv-dev**: task con `docker compose run --rm srv-dev <cmd>` (avvia ftcache se spento).
+- **ftcache** — Socket **unica stringa** `/ftcache/ftcache.sock` in compose (`command` + `healthcheck`
+  di `srv-ftcache`), config di ogni bot e config dev. Se un punto diverge → due daemon, budget
+  dimezzato (split-brain). I bot hanno `depends_on: srv-ftcache {condition: service_healthy}`:
+  se il daemon non parte, i bot restano in attesa.
+- **Pannello stato FreqUI** — Il fork interroga il socket di **default** (`/tmp/ftcache-<uid>.sock`),
+  non quello configurato: senza accorgimento mostra "offline" anche col daemon sano. I bot hanno un
+  **wrapper entrypoint** che symlinka il default al condiviso (§7), così il pannello è veritiero.
+  Source of truth operativa: healthcheck CLI (§2.4).
+- **srv-dev** — Task con `docker compose run --rm srv-dev <cmd>` (avvia ftcache se spento).
   **Mai** `compose run` su un servizio **live**: seconda istanza con stesso DB/wallet.
-- **Mount strategie**: `:ro` sui live, `:rw` su dev.
+- **Mount strategie** — `:ro` sui live, `:rw` su dev.
 
 ---
 
@@ -49,8 +53,9 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 
 ### 2.2 Clone + build
 ```bash
-git clone <repo-privata> trading-fleet && cd trading-fleet   # auth: SSH key o PAT
+git clone <repo-privata> trading-fleet && cd trading-fleet        # auth: SSH key o PAT
 git clone https://github.com/titouannwtt/freqtrade-ultimate.git freqtrade-ultimate
+git clone https://github.com/iterativv/NostalgiaForInfinity.git shared/NostalgiaForInfinity
 docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate:latest ./freqtrade-ultimate
 ```
 
@@ -62,6 +67,7 @@ cp bot1/user_data/config.example.json bot1/user_data/config.json
 cp bot2/.env.example bot2/.env
 cp bot2/user_data/config.example.json bot2/user_data/config.json
 cp dev/.env.example dev/.env
+chmod 600 .env.shared bot*/.env dev/.env
 ```
 Riempi i **reali** (mai i `.example`):
 - `.env.shared`: `TZ=UTC` (dati/funding/candele sono UTC), `TELEGRAM__CHAT_ID`, `FIAT_DISPLAY_CURRENCY`.
@@ -97,7 +103,7 @@ Pre-crea le directory con ownership+ACL: Docker crea i bind-mount mancanti come 
 FTUID=$(docker run --rm --entrypoint id freqtrade-ultimate:latest | grep -oP 'uid=\K\d+')
 HOSTUID=$(id -u); HOSTGID=$(id -g)
 
-mkdir -p bot1/user_data bot2/user_data dev/user_data shared/run shared/local backups
+mkdir -p bot1/user_data bot2/user_data dev/user_data shared/run shared/local shared/frequi backups
 sudo chown -R "$HOSTUID:$HOSTGID" bot1/user_data bot2/user_data dev/user_data shared/run shared/local backups
 sudo chmod -R o-rwx bot1/user_data bot2/user_data dev/user_data shared/run shared/local backups
 sudo find shared/local -type d -exec chmod 755 {} \;
@@ -116,7 +122,8 @@ getfacl -p bot2/user_data/config.json | head
 ```
 Regole d'oro: **mai** `user:` nel compose; **niente** `chown` sui `.env` (Docker li legge come utente host);
 log su **stdout**; dopo nuovi file in `shared/local`: `sudo setfacl -R -m "u:${FTUID}:rwX" shared/local`;
-niente `sudo` nell'operatività quotidiana. Permission denied → rilancia il ciclo ACL sulla dir incriminata.
+niente `sudo` nell'operatività quotidiana. `shared/frequi` (UI vendorizzata) resti **leggibile** dal
+container (mount `:ro`, dir 755/file 644). Permission denied → rilancia il ciclo ACL sulla dir incriminata.
 
 ---
 
@@ -248,20 +255,80 @@ isolare il capitale. Ruota JWT/ws/password periodicamente e dopo ogni esposizion
 ---
 
 ## 5. Aggiornamenti
+
+### 5.1 Fork + immagine
 ```bash
 cd freqtrade-ultimate && git pull --ff-only origin main
 docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate:latest .
 cd .. && docker compose up -d --force-recreate srv-bot1 srv-bot2   # adatta ai bot attivi
-# senza build, --force-recreate ricrea con la stessa immagine: inutile
-# strategie locali: modifica in shared/local → reload/restart del bot che le usa
-# config reale (ignorato): modifica → restart. LIVE: finestra calma (/stopentry prima;
-#   allo stop cadono gli ordini resting e lo stoploss locale è giù ~1 min; stop manuali se slitta)
-# template: se cambi struttura aggiorna i .example committati (SENZA segreti)
 ```
+Senza build, `--force-recreate` ricrea con la stessa immagine: inutile. **Bot live**: finestra calma
+(`/stopentry` prima; allo stop cadono gli ordini resting e lo stoploss locale è giù ~1 min).
+
+### 5.2 FreqUI Ultimate (install / update)
+
+La UI vive **dentro l'immagine**, in `freqtrade/rpc/api_server/ui/installed/`
+(nel container: `/freqtrade/freqtrade/rpc/api_server/ui/installed`). Aggiornarla = sostituire quei file.
+Ogni bot serve la **propria copia**: aggiorna tutti i bot che apri.
+
+**Via ufficiale (dentro il container; effimero, si perde al recreate):**
+```bash
+docker compose exec -T srv-bot2 freqtrade install-ui --ui-version v2.2.1
+```
+
+**Manuale + persistente (consigliato in Docker):** scarica la release, verifica, estrai in una dir host
+condivisa, montala `:ro` su ogni bot.
+```bash
+VER=v2.2.1
+mkdir -p shared/frequi/installed
+curl -L -o /tmp/frequi-ultimate-ui-$VER.zip \
+  https://github.com/titouannwtt/frequi-ultimate/releases/download/$VER/frequi-ultimate-ui-$VER.zip
+curl -L -o /tmp/SHA256SUMS \
+  https://github.com/titouannwtt/frequi-ultimate/releases/download/$VER/SHA256SUMS
+(cd /tmp && sha256sum -c SHA256SUMS)          # il nome zip DEVE matchare SHA256SUMS
+python3 -m zipfile -e /tmp/frequi-ultimate-ui-$VER.zip shared/frequi/installed/   # o unzip -o … -d
+ls shared/frequi/installed                    # index.html + assets (se nested, porta il contenuto su)
+```
+Monta su ogni bot (sopravvive ai recreate; una copia per tutti):
+```yaml
+    volumes:
+      - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro
+```
+Applica subito **senza restart** (copia nei container running), poi hard-refresh:
+```bash
+docker cp shared/frequi/installed/. bot1:/freqtrade/freqtrade/rpc/api_server/ui/installed/
+docker cp shared/frequi/installed/. bot2:/freqtrade/freqtrade/rpc/api_server/ui/installed/
+```
+**Hard-refresh del browser (Ctrl+Shift+R)** su ogni bot; verifica versione nel footer/about.
+`shared/frequi/` è un artifact vendorizzato: **gitignored**, non committarlo.
+
+*Alternativa baked-in:* estrai nel clone `freqtrade-ultimate/freqtrade/rpc/api_server/ui/installed/` e
+ribuilda l'immagine. Valida solo se il Dockerfile **non** sovrascrive la UI in build
+(`grep -n "install-ui" freqtrade-ultimate/Dockerfile`) e se `ui/installed/` è gitignored nel fork
+(altrimenti committi 5 MB di build). Più laborioso del mount.
+
+### 5.3 NostalgiaForInfinity (NFI)
+```bash
+git -C shared/NostalgiaForInfinity pull --ff-only origin main
+docker compose restart srv-bot1        # bot1 è dry: restart sicuro
+# in alternativa, senza restart: Telegram /reload_config sul bot che usa NFI
+```
+- Il mount è `:ro`: il pull si fa **sull'host**, il bot rilegge al restart/reload.
+- Per riproducibilità puoi pinnare un tag: `git -C shared/NostalgiaForInfinity fetch --tags &&
+  git -C shared/NostalgiaForInfinity checkout <tag>`.
+- I config NFI (`add_config_files`) puntano a `/nfi-repo/configs/…`: il path non cambia con l'update.
+- ⚠️ **NFI ha lookahead bias documentato**: le sue metriche di backtest **non** sono evidenza credibile;
+  usalo come riferimento, non come prova di edge.
+
+### 5.4 Strategie locali, config, template
+- Strategie in `shared/local`: modifica → reload/restart del bot che le usa.
+- Config reale (ignorato): modifica → restart. **Live**: finestra calma (vedi §5.1).
+- Template `.example` committati: se cambi struttura, aggiornali **senza segreti**.
 
 ---
 
 ## 6. Manutenzione
+
 ```bash
 # backup a caldo (WAL-safe, senza fermare il live). Replica per ogni bot live; esempio bot2:
 docker compose exec -T srv-bot2 python -c "import sqlite3;s=sqlite3.connect('file:/freqtrade/user_data/tradesv3.sqlite?mode=ro',uri=True);d=sqlite3.connect('/freqtrade/user_data/tradesv3-backup.sqlite');s.backup(d);d.close();s.close();print('ok')"
@@ -287,6 +354,10 @@ periodico a caldo + rotazione + offsite (sopra). Cadenza: giornaliero + pre-oper
 | Sintomo | Causa / fix |
 |---|---|
 | Due daemon / budget dimezzato | Socket path divergente → allinea `/ftcache/ftcache.sock` ovunque |
+| Pannello FreqUI "ftcache offline" ma CLI ONLINE | Probe di default `/tmp/…`; wrapper symlink nei bot (§7) o patch fork |
+| FreqUI mostra versione vecchia | Hard-refresh; ogni bot ha sua copia; mount path errato; `docker cp` non fatto |
+| `sha256 … FAILED open or read` | Nome zip diverso da quello in SHA256SUMS → rinomina/riscarica col nome originale |
+| `unzip: command not found` | Usa `python3 -m zipfile -e …` oppure `apt install unzip` |
 | `422 deserialize` Hyperliquid | camelCase vuoti o in `.env` → valori reali in `config.json` |
 | ftpairlist "offline" | Idle-shutdown 900s: normale |
 | Bot in attesa all'avvio | `depends_on` ftcache non healthy → risolvi il daemon prima |
@@ -309,7 +380,9 @@ chmod 600 bot$N/.env
 nano bot$N/.env                    # segreti UNIVOCI
 nano bot$N/user_data/config.json   # camelCase HL QUI; adatta exchange/strategia/sizing
 ```
-**Compose** — aggiungi il blocco (adatta nome/porte/strategia; **niente** `user:`; mount `:ro` se live):
+**Compose** — aggiungi il blocco (adatta nome/porte/strategia; **niente** `user:`; mount `:ro` se live).
+Il wrapper entrypoint crea il symlink del socket di default → condiviso (pannello FreqUI veritiero)
+e poi `exec`a freqtrade (PID 1, stop graceful):
 ```yaml
   srv-bot3:
     <<: *defaults
@@ -321,11 +394,18 @@ nano bot$N/user_data/config.json   # camelCase HL QUI; adatta exchange/strategia
       - ./bot3/user_data:/freqtrade/user_data
       - ./shared/local:/local:ro
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data
+      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro
+      - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro   # UI condivisa
     ports: ["127.0.0.1:8083:8080"]
-    command: >
-      trade --config /freqtrade/user_data/config.json --strategy <Strategia>
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        ln -sf /ftcache/ftcache.sock /tmp/ftcache-$$(id -u).sock &&
+        exec freqtrade trade
+        --config /freqtrade/user_data/config.json
+        --strategy <Strategia>
 ```
+(`$$` escaping compose; `$(id -u)` valutato nel container → uid-agnostic.)
 ```bash
 # permessi sul nuovo bot
 FTUID=$(docker run --rm --entrypoint id freqtrade-ultimate:latest | grep -oP 'uid=\K\d+'); HOSTUID=$(id -u)
@@ -352,10 +432,12 @@ dry); sizing/leva validati; mount `:ro`; segreti reali presenti. Poi
 
 | Committato (repo privata) | Locale / ignorato |
 |---|---|
-| `docker-compose.yml`, strategie `shared/local/`, template `.example`, tooling | `config.json`, `.env`, `.env.shared`, DB, log, `shared/run/`, `dev/user_data/`, `backups/`, cache |
+| `docker-compose.yml`, strategie `shared/local/`, template `.example`, tooling | `config.json`, `.env`, `.env.shared`, DB, log, `shared/run/`, `dev/user_data/`, `backups/`, cache, `shared/frequi/`, cloni esterni (`freqtrade-ultimate/`, `shared/NostalgiaForInfinity/`) |
 
 ---
 
 ## Risorse
 - [Freqtrade](https://www.freqtrade.io/) · [Freqtrade Ultimate](https://github.com/titouannwtt/freqtrade-ultimate)
+- [FreqUI Ultimate releases](https://github.com/titouannwtt/frequi-ultimate/releases) ·
+  [NostalgiaForInfinity](https://github.com/iterativv/NostalgiaForInfinity)
 - [Tailscale](https://tailscale.com/kb/) · [Oracle Cloud Free](https://www.oracle.com/cloud/free/)
