@@ -99,6 +99,7 @@ services:
       - ./shared/NostalgiaForInfinity:/nfi-repo:ro
       - ./shared/run:/ftcache:rw
       - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro   # bundle protetto
+      - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro
     ports:
       - "127.0.0.1:8081:8080"
     entrypoint: ["/bin/sh", "-c"]
@@ -125,6 +126,7 @@ services:
       - ./shared/local:/local:ro
       - ./shared/run:/ftcache:rw
       - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro   # bundle protetto
+      - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro
     ports:
       - "127.0.0.1:8082:8080"
     entrypoint: ["/bin/sh", "-c"]
