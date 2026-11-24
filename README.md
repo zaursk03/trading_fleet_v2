@@ -12,7 +12,7 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 
 **Indice**: [1 Servizi](#1-servizi) · [2 Installazione](#2-installazione) · [3 Permessi & UID](#3-permessi--uid) ·
 [4 Sicurezza](#4-sicurezza) · [5 Aggiornamenti](#5-aggiornamenti) · [6 Manutenzione](#6-manutenzione) ·
-[7 Aggiungere un bot](#7-aggiungere-un-bot-botn) · [8 Committato vs locale](#8-committato-vs-locale)
+[7 Aggiungere un bot](#7-aggiungere-un-bot-botn)
 
 ---
 
@@ -442,18 +442,6 @@ docker compose exec -T srv-bot$N python -m freqtrade.ohlcv_cache.healthcheck --s
 ```
 **Go-live**: DB vergine (`tradesv3-live.sqlite`), sizing/leva validati, mount `:ro`, segreti reali.
 Poi `up -d --force-recreate`. **Mai** `compose run` sul live.
-
----
-
-## 8. Committato vs locale
-
-Il `.gitignore` **committato è già corretto**: ignora `config.json`, `.env`, `.env.shared`, DB, log,
-`shared/run/`, `dev/user_data/`, `backups/`, cache, `shared/data/`, `shared/frequi/`, e i cloni esterni.
-Nessuna modifica manuale al `.gitignore` è richiesta.
-
-| Committato (repo privata) | Locale / ignorato |
-|---|---|
-| compose, strategie `shared/local/`, template `.example`, tooling, `.gitignore` | config.json, .env, .env.shared, DB, log, shared/run/, dev/user_data/, backups/, cache, shared/data/, shared/frequi/, cloni esterni (fork light, NFI) |
 
 ---
 
