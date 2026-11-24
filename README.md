@@ -3,7 +3,8 @@
 Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolamento per-bot
 (config + DB separati) e accesso remoto **solo via Tailscale**.
 
-**Repo privata.** Versiona: infra, strategie, template `.example`, tooling.
+**Repo privata.** Versiona: infra, strategie, template `.example`, tooling, `.gitignore` e compose
+**già corretti** (il README descrive, non chiede patch manuali ai file committati).
 **Non** versiona: file reali con segreti (`config.json`, `.env`), DB, log, runtime IPC, dati di ricerca, artifact UI.
 
 > ⚠️ **Disclaimer**: software educativo. Il trading di criptovalute può portare alla perdita totale
@@ -25,10 +26,10 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 | `srv-dev` | Runner usa-e-getta (download/backtest/replay) | Mai live; niente porte; limiti CPU/RAM |
 
 - **Due magazzini dati** — Bundle ricerca = `./shared/data` (**fuori dal clone git**, ~2 GB, `:ro` sui
-  live, `rw` su dev). Cache live = ftcache (effimera). Il bundle è uno **snapshot statico**: si refresha
-  forward periodicamente (§6.2); il live non lo usa (ftcache fetcha live).
+  live, `rw` su dev). Cache live = ftcache (effimera). Il bundle è uno **snapshot statico**: refresh
+  forward periodico in §6.2; il live non lo usa (ftcache fetcha live).
 - **Fork light** — Clone del fork **sparse (~130 MB), senza bundle candele**; i dati vivono solo in
-  `shared/data`. `.dockerignore` esclude `user_data/`: l'immagine non contiene dati in ogni caso.
+  `shared/data`. `.dockerignore` del fork esclude `user_data/`: l'immagine non contiene dati.
 - **ftcache** — Socket **unica stringa** `/ftcache/ftcache.sock` in compose (`command` + `healthcheck`
   di `srv-ftcache`), config di ogni bot e config dev. Se un punto diverge → due daemon, budget
   dimezzato (split-brain). I bot `depends_on: srv-ftcache {condition: service_healthy}`: se il daemon
@@ -70,18 +71,15 @@ docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate
 - **Clone esistente full/dirty?** Preserva i dati in `shared/data` (§2.3), poi
   `mv freqtrade-ultimate freqtrade-ultimate.old`, riclona light, rebuild, e dopo verify `rm -rf …old`.
 
-### 2.3 Seed storico (~2 GB) in `shared/data`, poi refresh lì
-Il bundle del fork va **più indietro del limite API 5000 candele**: seedalo una tantum con un clone
-temporaneo, poi eliminalo. Il clone principale resta light. I refresh correnti scrivono in `shared/data`.
+### 2.3 Seed storico (~2 GB) in `shared/data` (una tantum)
+Il bundle del fork va **più indietro del limite API 5000 candele**: seedalo con un clone temporaneo,
+poi eliminalo. Il clone principale resta light. I refresh periodici sono **solo** in §6.2.
 ```bash
 mkdir -p shared/data
 git clone --filter=blob:none https://github.com/titouannwtt/freqtrade-ultimate.git /tmp/ft-seed   # ~2 GB, con dati
 cp -a /tmp/ft-seed/user_data/data/. shared/data/
 rm -rf /tmp/ft-seed
-# refresh forward (append candele recenti) — periodico, vedi §6.2
-docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h
 ```
-`.gitignore` della repo fleet: `shared/data/` (già presente).
 
 ### 2.4 Template → file reali, poi riempi i segreti
 ```bash
@@ -149,7 +147,7 @@ docker compose run --rm srv-dev sh -c 'touch /freqtrade/user_data/data/.wtest &&
 ```
 Regole: **mai** `user:` nel compose; **niente** `chown` sui `.env`; log su **stdout**; dopo nuovi file in
 `shared/local`: `sudo setfacl -R -m "u:${FTUID}:rwX" shared/local`; niente `sudo` quotidiano.
-EACCES su unlink/write → rilancia chown+ACL sulla dir (ownership padre conta per unlink).
+EACCES su unlink/write → rilancia chown+ACL sulla dir (per unlink conta l'ownership della dir padre).
 
 ---
 
@@ -274,6 +272,8 @@ Hyperliquid API agent + vault/subaccount; ruota JWT/ws/password periodicamente e
 
 ## 5. Aggiornamenti
 
+> Solo codice/immagine/UI/strategie/config. Il refresh dei **dati** è manutenzione (§6.2), non update.
+
 ### 5.1 Fork + immagine
 ```bash
 git -C freqtrade-ultimate pull --ff-only origin main
@@ -304,7 +304,8 @@ python3 -m zipfile -e /tmp/frequi-ultimate-ui-$VER.zip shared/frequi/installed/
     volumes:
       - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro
 ```
-Oppure `docker cp … botN:<UI_PATH>/` (effimero). `shared/frequi/` gitignored. Ogni bot sua copia.
+Oppure `docker cp … botN:<UI_PATH>/` (effimero). `shared/frequi/` è ignorato dal `.gitignore` committato.
+Ogni bot serve la propria copia: aggiorna tutti quelli che apri.
 
 ### 5.3 NostalgiaForInfinity
 ```bash
@@ -446,9 +447,13 @@ Poi `up -d --force-recreate`. **Mai** `compose run` sul live.
 
 ## 8. Committato vs locale
 
+Il `.gitignore` **committato è già corretto**: ignora `config.json`, `.env`, `.env.shared`, DB, log,
+`shared/run/`, `dev/user_data/`, `backups/`, cache, `shared/data/`, `shared/frequi/`, e i cloni esterni.
+Nessuna modifica manuale al `.gitignore` è richiesta.
+
 | Committato (repo privata) | Locale / ignorato |
 |---|---|
-| compose, strategie `shared/local/`, template `.example`, tooling | config.json, .env, .env.shared, DB, log, shared/run/, dev/user_data/, backups/, cache, **shared/data/**, shared/frequi/, cloni esterni (fork light, NFI) |
+| compose, strategie `shared/local/`, template `.example`, tooling, `.gitignore` | config.json, .env, .env.shared, DB, log, shared/run/, dev/user_data/, backups/, cache, shared/data/, shared/frequi/, cloni esterni (fork light, NFI) |
 
 ---
 
