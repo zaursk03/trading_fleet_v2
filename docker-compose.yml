@@ -1,10 +1,12 @@
 name: trading-fleet
 
 # ═══════════════════════════════════════════════════════════════
-#  Due magazzini: bundle ricerca (git-tracked nel fork, :ro sui live)
-#  vs cache live (ftcache). Runtime IPC = ./shared/run → /ftcache.
+#  Bundle ricerca = ./shared/data (FUORI dal clone git, :ro sui live, rw su dev).
+#  Cache live = ftcache. Runtime IPC = ./shared/run → /ftcache.
 #  Dev = runner (MAI live); live = servizi separati, DB vergine.
 #  Ricerca versionata = shared/local/sviluppo; runtime dev ignorato = dev/user_data.
+#  UI: baked nell'immagine (install-ui nel Dockerfile fetcha frequi-ultimate latest).
+#  Wrapper entrypoint sui bot: symlink socket default → condiviso (pannello FreqUI veritiero).
 # ═══════════════════════════════════════════════════════════════
 
 x-defaults: &defaults
@@ -23,17 +25,15 @@ x-defaults: &defaults
 services:
 
   # ── Daemon OHLCV condiviso: un solo rate-budget per wallet ──
-  # Non è un bot: niente porte, niente API, niente segreti exchange.
-  # I bot sono client puri → spegnerne uno non uccide mai il daemon.
   srv-ftcache:
     <<: *defaults
     image: freqtrade-ultimate:latest
     container_name: ftcache
     stop_grace_period: 30s
     env_file:
-      - .env.shared            # solo TZ/non-segreti, per log coerenti
+      - .env.shared
     entrypoint: ["python", "-m", "freqtrade.ohlcv_cache.daemon"]
-    command: ["--socket", "/ftcache/ftcache.sock"]   # ← conferma con: python -m freqtrade.ohlcv_cache.daemon --help
+    command: ["--socket", "/ftcache/ftcache.sock"]
     volumes:
       - ./shared/run:/ftcache:rw
     healthcheck:
@@ -43,8 +43,7 @@ services:
       retries: 3
       start_period: 30s
 
-  # ── Daemon pairlist (OPZIONALE): abilita con >=2 live stessa pairlist dinamica ──
-  # "offline" dopo 15 min idle è NORMALE (IDLE_SHUTDOWN_S=900), non un guasto.
+  # ── Daemon pairlist (OPZIONALE) ──
   # srv-ftpairlist:
   #   <<: *defaults
   #   image: freqtrade-ultimate:latest
@@ -60,10 +59,7 @@ services:
   #     retries: 3
   #     start_period: 30s
 
-  # ── DEV / RICERCA · runner dedicato · MAI live · prima dei bot ──
-  # Config+strategie+codice = /local/sviluppo (versionato). DB/output = dev/user_data (ignorato).
-  # Non è un demone: command placeholder esce subito; task via `run --rm`.
-  # Eredita logging rotato da defaults; override restart/healthcheck.
+  # ── DEV / RICERCA · runner dedicato · MAI live ──
   srv-dev:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -72,19 +68,19 @@ services:
     healthcheck: { disable: true }
     env_file:
       - .env.shared
-      - ./dev/.env                    # NO chiavi live
+      - ./dev/.env
     depends_on:
       srv-ftcache: { condition: service_healthy }
     volumes:
       - ./dev/user_data:/freqtrade/user_data
       - ./shared/local:/local:rw
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data   # rw: download-data scrive
-    cpus: 1.0                          # protegge i live dalla fame di hyperopt/backtest
-    mem_limit: 4g
+      - ./shared/data:/freqtrade/user_data/data        # rw: download-data scrive qui (fuori dal clone)
+    cpus: 1.0
+    mem_limit: 6g
     command: ["--help"]
 
-  # ── BOT 1 · NFI X7 · DRY-RUN (metriche non credibili: lookahead bias) ──
+  # ── BOT 1 · NFI X7 · DRY-RUN ──
   srv-bot1:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -98,8 +94,7 @@ services:
       - ./bot1/user_data:/freqtrade/user_data
       - ./shared/NostalgiaForInfinity:/nfi-repo:ro
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro   # bundle protetto
-      - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro
+      - ./shared/data:/freqtrade/user_data/data:ro     # bundle protetto, fuori dal clone
     ports:
       - "127.0.0.1:8081:8080"
     entrypoint: ["/bin/sh", "-c"]
@@ -111,7 +106,6 @@ services:
         --strategy NostalgiaForInfinityX7
 
   # ── BOT 2 · RubberBandMeanRev · LIVE ⚠ (mai `compose run` qui) ──
-  # NB: la classe nel file strategia deve chiamarsi RubberBandMeanRev6253.
   srv-bot2:
     <<: *defaults
     image: freqtrade-ultimate:latest
@@ -125,8 +119,7 @@ services:
       - ./bot2/user_data:/freqtrade/user_data
       - ./shared/local:/local:ro
       - ./shared/run:/ftcache:rw
-      - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro   # bundle protetto
-      - ./shared/frequi/installed:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro
+      - ./shared/data:/freqtrade/user_data/data:ro
     ports:
       - "127.0.0.1:8082:8080"
     entrypoint: ["/bin/sh", "-c"]
@@ -148,7 +141,7 @@ services:
   #     - ./bot4/user_data:/freqtrade/user_data
   #     - ./shared/local:/local:ro
   #     - ./shared/run:/ftcache:rw
-  #     - ./freqtrade-ultimate/user_data/data:/freqtrade/user_data/data:ro
+  #     - ./shared/data:/freqtrade/user_data/data:ro
   #   ports: ["127.0.0.1:8084:8080"]
   #   entrypoint: ["/bin/sh", "-c"]
   #   command:
