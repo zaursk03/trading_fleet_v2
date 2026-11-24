@@ -70,6 +70,7 @@ shared/cache/
 shared/NostalgiaForInfinity/
 freqtrade-ultimate/
 shared/frequi/
+shared/data/
 
 # ═══════════════════════════════════════════════════════════════
 #  7 · PYTHON / TEST CACHE
