@@ -26,6 +26,8 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 
 - **Due magazzini dati** — Bundle ricerca = `./shared/data` (**fuori dal clone git**, `:ro` sui live,
   `rw` su dev). Cache live = ftcache (effimera). Non confonderli: il bundle non si resetta come la cache.
+- **Fork light** — Il clone del fork è **sparse (~130 MB), senza bundle candele**; i dati vivono solo in
+  `shared/data`. Il `.dockerignore` del fork esclude `user_data/`: l'immagine non contiene dati in ogni caso.
 - **ftcache** — Socket **unica stringa** `/ftcache/ftcache.sock` in compose (`command` + `healthcheck`
   di `srv-ftcache`), config di ogni bot e config dev. Se un punto diverge → due daemon, budget
   dimezzato (split-brain). I bot hanno `depends_on: srv-ftcache {condition: service_healthy}`:
@@ -52,23 +54,35 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
   Immagini multi-arch: ARM64 nativo ok.
 - **Chiave SSH** Ed25519 con passphrase: `ssh-keygen -t ed25519 -f ~/.ssh/oracle_fleet`;
   `chmod 700 ~/.ssh && chmod 600 ~/.ssh/oracle_fleet`. Backup in password manager + USB criptata.
+- **Disco**: il seed storico temporaneo pesa ~2 GB; verifica spazio con `df -h` prima di §2.3.
 
-### 2.2 Clone + build
+### 2.2 Clone + build (fork LIGHT)
 ```bash
 git clone <repo-privata> trading-fleet && cd trading-fleet        # auth: SSH key o PAT
-git clone https://github.com/titouannwtt/freqtrade-ultimate.git freqtrade-ultimate
 git clone https://github.com/iterativv/NostalgiaForInfinity.git shared/NostalgiaForInfinity
+# fork LIGHT (~130 MB): codice SENZA bundle candele (procedura ufficiale del fork)
+git clone --filter=blob:none --sparse https://github.com/titouannwtt/freqtrade-ultimate.git freqtrade-ultimate
+git -C freqtrade-ultimate sparse-checkout set --no-cone '/*' '!user_data/data'
 docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate:latest ./freqtrade-ultimate
 ```
-Il build esegue `freqtrade install-ui`, che scarica **frequi-ultimate latest**: la UI è baked nell'immagine.
+- `--filter=blob:none` scarica i contenuti on-demand; `--sparse` + sparse-checkout escludono `user_data/data`.
+- Il build esegue `freqtrade install-ui` → **frequi-ultimate latest** baked nell'immagine (§5.2).
+- `.dockerignore` esclude `user_data/`: build context piccolo, immagine senza dati.
+- **Clone esistente full/dirty?** Converti: preserva i dati in `shared/data` (§2.3), poi
+  `mv freqtrade-ultimate freqtrade-ultimate.old`, riclona light come sopra, rebuild, e solo dopo verify
+  `rm -rf freqtrade-ultimate.old`.
 
-### 2.3 Dati di ricerca in `shared/data` (fuori dal clone git)
-Il bundle committato nel fork è solo un **seed**: copialo una volta in `shared/data`, poi i download
-dev scrivono lì e il clone resta pulito (pull/reset indolori).
+### 2.3 Seed storico profondo in `shared/data` (poi download correnti lì)
+Il bundle del fork va **più indietro del limite API 5000 candele**: seedalo una tantum in `shared/data`
+con un clone temporaneo, poi eliminalo. Il clone principale resta light.
 ```bash
 mkdir -p shared/data
-cp -a freqtrade-ultimate/user_data/data/. shared/data/
-# in alternativa, scarica fresco con srv-dev (download-data) dopo l'avvio
+git clone --filter=blob:none https://github.com/titouannwtt/freqtrade-ultimate.git /tmp/ft-seed   # ~2 GB, con dati
+cp -a /tmp/ft-seed/user_data/data/. shared/data/
+rm -rf /tmp/ft-seed
+# refresh/estensioni correnti: scaricano DIRETTAMENTE in shared/data (dev mount rw), mai nel clone
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json \
+  --timeframes 15m 5m 1h --timerange 20240101-
 ```
 Aggiungi al `.gitignore` della repo fleet: `shared/data/`.
 
@@ -111,7 +125,7 @@ docker compose exec -T srv-bot2 python -m freqtrade.ohlcv_cache.healthcheck --so
 
 UID **non fissi** (Oracle `opc`=1000 sposta `ubuntu`=1001; `ftuser` varia per immagine): rilevali sempre.
 Pre-crea le directory con ownership+ACL: Docker crea i bind-mount mancanti come **root** → permission denied.
-`cp -a` preserva ownership misti: normalizza con `chown -R` (incluso `shared/data`).
+`cp -a` (seed) preserva ownership misti: normalizza con `chown -R` (incluso `shared/data`).
 
 ```bash
 FTUID=$(docker run --rm --entrypoint id freqtrade-ultimate:latest | grep -oP 'uid=\K\d+')
@@ -126,7 +140,7 @@ sudo find bot1/user_data bot2/user_data -name '*.json' -exec chmod 640 {} \;   #
 chmod 600 .env.shared bot1/.env bot2/.env dev/.env                              # env: solo owner
 
 # ACL container + host, anche in default per i file futuri.
-# shared/data: niente o-rwx (dati non segreti); la write dev passa dall'ACL, la read dei bot pure.
+# shared/data: niente o-rwx (dati non segreti); write dev e read bot passano dall'ACL.
 for d in bot1/user_data bot2/user_data dev/user_data shared/run shared/local shared/data; do
   sudo setfacl -R -m  "u:${FTUID}:rwX"   "$d";  sudo setfacl -R -d -m "u:${FTUID}:rwX"   "$d"
   sudo setfacl -R -m  "u:${HOSTUID}:rwX" "$d";  sudo setfacl -R -d -m "u:${HOSTUID}:rwX" "$d"
@@ -281,6 +295,7 @@ git -C freqtrade-ultimate reset --hard origin/main   # scarta solo locale; i dat
 docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate:latest ./freqtrade-ultimate
 docker compose up -d --force-recreate srv-ftcache srv-bot1 srv-bot2   # finestra calma (bot2 live)
 ```
+- Lo **sparse-checkout persiste** across pull/reset: il clone resta light (~130 MB), niente feather dirty.
 - Senza build, `--force-recreate` ricrea con la stessa immagine: inutile.
 - Il rebuild aggiorna **anche la UI** (install-ui fetcha frequi-ultimate latest, §5.2).
 - **Bot live**: finestra calma (`/stopentry` prima; allo stop cadono gli ordini resting e lo stoploss
@@ -341,7 +356,7 @@ find backups -name 'bot2-*.sqlite' -mtime +7 -delete
 # prune artefatti dev (grandi, ignorati)
 find dev/user_data/backtest_results -type f -mtime +30 -delete 2>/dev/null
 find dev/user_data/hyperopt_results -type f -mtime +30 -delete 2>/dev/null
-# prune finestre 1m vecchie in shared/data (fuori git, prune senza paura)
+# prune finestre vecchie in shared/data (fuori git, prune senza paura); backup offsite se vuoi versionare i dati
 df -h
 ```
 Il fork può fare backup DB al graceful shutdown, ma è **locale e solo allo stop**: serve comunque snapshot
@@ -359,9 +374,10 @@ periodico a caldo + rotazione + offsite (sopra). Cadenza: giornaliero + pre-oper
 
 | Sintomo | Causa / fix |
 |---|---|
-| `pull --ff-only` abort / "forced update" | Upstream force-push → `fetch` + `reset --hard origin/main` (dati in shared/data, clone pulito) |
-| Feather dirty nel clone fork | Dati ora in `shared/data`; il clone non si sporca più |
+| Clone fork pesante / feather dirty | Usa clone light sparse (§2.2); dati solo in `shared/data` |
+| `pull --ff-only` abort / "forced update" | Upstream force-push → `fetch` + `reset --hard origin/main` (sparse preservato) |
 | `shared/data` permission denied (dev) | Ownership+ACL §3 su `shared/data` (cp -a preserva ownership misti) |
+| Seed temporaneo leftover | `rm -rf /tmp/ft-seed` dopo la copia in shared/data |
 | Due daemon / budget dimezzato | Socket path divergente → allinea `/ftcache/ftcache.sock` ovunque |
 | Pannello FreqUI "ftcache offline" ma CLI ONLINE | Probe di default `/tmp/…`; wrapper symlink nei bot (§7) o patch fork |
 | UI vuota/rotta dopo mount | Mount `shared/frequi` vuoto nasconde la UI baked → rimuovi il mount o popola la dir |
@@ -441,7 +457,7 @@ dry); sizing/leva validati; mount `:ro`; segreti reali presenti. Poi
 
 | Committato (repo privata) | Locale / ignorato |
 |---|---|
-| `docker-compose.yml`, strategie `shared/local/`, template `.example`, tooling | `config.json`, `.env`, `.env.shared`, DB, log, `shared/run/`, `dev/user_data/`, `backups/`, cache, `shared/data/`, `shared/frequi/`, cloni esterni (`freqtrade-ultimate/`, `shared/NostalgiaForInfinity/`) |
+| `docker-compose.yml`, strategie `shared/local/`, template `.example`, tooling | `config.json`, `.env`, `.env.shared`, DB, log, `shared/run/`, `dev/user_data/`, `backups/`, cache, `shared/data/`, `shared/frequi/`, cloni esterni (`freqtrade-ultimate/` light, `shared/NostalgiaForInfinity/`) |
 
 ---
 
