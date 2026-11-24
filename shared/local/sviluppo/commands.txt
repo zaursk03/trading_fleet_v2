@@ -1,56 +1,61 @@
 # ═══════════════════════════════════════════════════════════════
 #  commands.txt — comandi tipici srv-dev (ricerca) + fleet ops
-#  Tutti i file di ricerca: shared/local/sviluppo/ (flat) → /local/sviluppo/…
-#  base: /local/sviluppo/config-dev.json  (importa /local/sviluppo/experiment.json)
+#  File ricerca: shared/local/sviluppo/ (flat) → /local/sviluppo/…
+#  base: config-dev.json .importa experiment.json (strategy/timeframe/exchange/sizing LI).
+#  --strategy NON serve: lo legge experiment.json (CLI --strategy = override opzionale).
 #  srv-dev = runner: usa `run --rm`. MAI `compose run` su servizi live.
 # ═══════════════════════════════════════════════════════════════
 
 # ── 0 · verify / ispezione ─────────────────────────────────────
 docker compose run --rm srv-dev show-config --config /local/sviluppo/config-dev.json
 docker compose run --rm srv-dev test-pairlist --config /local/sviluppo/config-dev.json -v
-docker compose run --rm srv-dev list-data --config /local/sviluppo/config-dev.json --timeframes 15m
+docker compose run --rm srv-dev list-data --config /local/sviluppo/config-dev.json --timeframes 15m --show-timerange
 docker compose run --rm --entrypoint python srv-dev -m freqtrade.ohlcv_cache.healthcheck --socket /ftcache/ftcache.sock
 
-# ── 1 · download-data (bundle; coda LOW dietro i live) ─────────
+# ── 1 · download-data (scrive in shared/data via mount dev) ────
+# refresh forward (append recenti): PRIMARIO col seed profondo già presente
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h
 # probe 1m (retention): una coppia sola, non alla cieca
 docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --pairs BTC/USDC:USDC --timeframes 1m --timerange 20261001-
-# backfill profondo (prepend prima dello start esistente)
+# estendere indietro oltre il seed (API limitata): opzionale
 docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h --timerange 20240101- --prepend
-# refresh recente
-docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h --timerange 20260801-
 # NB: futures mode scarica anche funding 1h + mark. NON disabilitare ftcache.
 
-# ── 2 · coverage / census (gate: N indipendenti >= 100) ────────
-docker compose run --rm --entrypoint python srv-dev /local/sviluppo/00_inventory.py
-docker compose run --rm --entrypoint python srv-dev /local/sviluppo/01_census.py
+# ── 2 · coverage (script rimossi): controllo inline ────────────
+docker compose run --rm --entrypoint python srv-dev -c "import pandas as pd,glob; fs=glob.glob('/freqtrade/user_data/data/hyperliquid/futures/*-15m-futures.feather'); print('coppie 15m:',len(fs)); df=pd.read_feather(fs[0]); print('esempio:',df['date'].min(),df['date'].max(),len(df))"
+# gate N>=100 indipendenti: si valuta sui risultati/cluster, non sulle coppie grezze
 
-# ── 3 · backtesting (#20: detail 1m; se assente 5m = ottimista, dichiaralo) ──
-docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801 --timeframe-detail 1m
+# ── 3 · backtesting (strategy da experiment.json; detail 1m se presente, else 5m=ottimista) ──
+docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --timerange 20240101-20260801 --timeframe-detail 1m
 # fallback 5m (risultati ottimistici → dichiararlo nel report)
-docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801 --timeframe-detail 5m
+docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --timerange 20240101-20260801 --timeframe-detail 5m
 
 # ── 4 · bias check PRIMA di fidarsi del backtest ───────────────
-docker compose run --rm srv-dev lookahead-analysis --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801
-docker compose run --rm srv-dev recursive-analysis --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801
+docker compose run --rm srv-dev lookahead-analysis --config /local/sviluppo/config-dev.json --timerange 20240101-20260801
+docker compose run --rm srv-dev recursive-analysis --config /local/sviluppo/config-dev.json --timerange 20240101-20260801
 
-# ── 5 · hyperopt (#14/#38: 200-300 epochs; PlateauSampler; #21: delete .json co-located; #201: no log in strategy) ──
-docker compose run --rm srv-dev hyperopt --config /local/sviluppo/config-dev.json --strategy SalientFlush --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --spaces buy sell roi stoploss --timerange 20240101-20260101
-# NB: niente trailing nativo (#10); loss Calmar/MoutonMeanRev per mean-reversion (#2/#197)
+# ── 5 · hyperopt (200-300 epochs; PlateauSampler; delete .json co-located prima; no log in strategy) ──
+docker compose run --rm srv-dev hyperopt --config /local/sviluppo/config-dev.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --spaces buy sell roi stoploss --timerange 20240101-20260101
+# NB: niente trailing nativo; loss Calmar/MoutonMeanRev per mean-reversion
 
-# ── 6 · walk-forward CPCV + PBO (<0.5) + holdout intoccabile (#85/#189) ──
-docker compose run --rm srv-dev walk-forward --config /local/sviluppo/config-dev.json --strategy SalientFlush --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --wf-mode cpcv --wf-cpcv-groups 6 --wf-cpcv-test-groups 2 --wf-embargo-days 3 --wf-holdout-months 2 --timerange 20240101-20260801
+# ── 6 · walk-forward CPCV + PBO (<0.5) + holdout intoccabile ───
+# conferma i nomi dei flag wf-* con --help (fork-specific):
+docker compose run --rm srv-dev walk-forward --help
+docker compose run --rm srv-dev walk-forward --config /local/sviluppo/config-dev.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --wf-mode cpcv --wf-cpcv-groups 6 --wf-cpcv-test-groups 2 --wf-embargo-days 3 --wf-holdout-months 2 --timerange 20240101-20260801
 
 # ── 7 · replay (parity live-vs-backtest; MAI per selezionare parametri) ──
-# richiede blocco dry_run_replay nel config dev:
+# richiede blocco dry_run_replay in experiment.json:
 #   {automatic_launch:true, start_date:"01/01/2026", end_date:"today", resolution:"1m", reset_db:false}
-docker compose run --rm --service-ports srv-dev trade --config /local/sviluppo/config-dev.json --strategy SalientFlush
+docker compose run --rm srv-dev trade --config /local/sviluppo/config-dev.json
 
-# ── 8 · plot (opzionale) ──────────────────────────────────────
-docker compose run --rm srv-dev plot-dataframe --config /local/sviluppo/config-dev.json --strategy SalientFlush --pairs BTC/USDC:USDC --timerange 20260101-20260801
-docker compose run --rm srv-dev plot-profit --config /local/sviluppo/config-dev.json --strategy SalientFlush --timerange 20240101-20260801
+# ── 8 · plot (opzionale; plot-profit richiede un backtest già eseguito) ──
+docker compose run --rm srv-dev plot-dataframe --config /local/sviluppo/config-dev.json --pairs BTC/USDC:USDC --timerange 20260101-20260801
+docker compose run --rm srv-dev plot-profit --config /local/sviluppo/config-dev.json --timerange 20240101-20260801
 
 # ── 9 · fleet ops (bot2 LIVE: mai compose run; logs/backup/kill-switch) ──
 docker logs --tail 100 bot2
-# backup a caldo con Python sqlite3 (WAL-safe; niente sqlite3 CLI nell'immagine)
+# backup a caldo (WAL-safe). sqlite3 CLI è presente nell'immagine: alternativa sqlite3 … ".backup …"
 docker compose exec -T srv-bot2 python -c "import sqlite3;s=sqlite3.connect('file:/freqtrade/user_data/tradesv3.sqlite?mode=ro',uri=True);d=sqlite3.connect('/freqtrade/user_data/tradesv3-backup.sqlite');s.backup(d);d.close();s.close();print('backup ok')"
+mv bot2/user_data/tradesv3-backup.sqlite backups/bot2-$(date +%Y%m%d).sqlite
+find backups -name 'bot2-*.sqlite' -mtime +7 -delete
 # kill-switch ingressi (lascia gestione posizioni): Telegram /stopentry su bot2
