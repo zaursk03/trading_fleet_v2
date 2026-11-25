@@ -1,0 +1,40 @@
+{
+    "exchange": {
+        "name": "binance",
+        "pair_whitelist": [
+            "BTC/USDT:USDT","ETH/USDT:USDT",
+            "SOL/USDT:USDT","AVAX/USDT:USDT","SUI/USDT:USDT","APT/USDT:USDT","SEI/USDT:USDT","TIA/USDT:USDT","NEAR/USDT:USDT","INJ/USDT:USDT",
+            "ARB/USDT:USDT","OP/USDT:USDT",
+            "UNI/USDT:USDT","AAVE/USDT:USDT","LDO/USDT:USDT","CRV/USDT:USDT",
+            "DOGE/USDT:USDT","WIF/USDT:USDT","1000PEPE/USDT:USDT",
+            "FET/USDT:USDT","RENDER/USDT:USDT",
+            "FIL/USDT:USDT","PYTH/USDT:USDT","JTO/USDT:USDT",
+            "DYDX/USDT:USDT",
+            "ENA/USDT:USDT","LINK/USDT:USDT","XRP/USDT:USDT","ADA/USDT:USDT","LTC/USDT:USDT"
+        ],
+        "pair_blacklist": []
+    },
+    "pairlists": [ { "method": "StaticPairList" } ],
+
+    "strategy": "Strategy_name",
+    "timeframe": "15m",
+    "trading_mode": "futures",
+    "margin_mode": "isolated",
+
+    "stake_currency": "USDT",
+    "stake_amount": 30,
+    "max_open_trades": 3,
+    "available_capital": 600,
+    "dry_run_wallet": 600,
+    "tradable_balance_ratio": 0.5,
+
+    "use_custom_stoploss": true,
+    "position_adjustment_enable": true,
+
+    "entry_pricing": { "price_side": "same", "use_order_book": true, "order_book_top": 1, "price_last_balance": 0.0,
+        "check_depth_of_market": { "enabled": false, "bids_to_ask_delta": 1 } },
+    "exit_pricing": { "price_side": "same", "use_order_book": true, "order_book_top": 1, "price_last_balance": 0.5 },
+    "order_types": { "entry": "limit", "exit": "limit", "stoploss": "market", "stoploss_on_exchange": true },
+    "order_time_in_force": { "entry": "GTC", "exit": "GTC" },
+    "unfilledtimeout": { "entry": 15, "exit": 10, "exit_timeout_count": 2, "unit": "minutes" }
+}
