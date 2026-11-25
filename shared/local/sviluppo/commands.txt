@@ -2,56 +2,60 @@
 #  commands.txt — srv-dev (ricerca) + fleet ops
 #  File ricerca: shared/local/sviluppo/ (flat) → /local/sviluppo/…
 #  BASE PURO: config-dev.json = solo infrastruttura (SENZA add_config_files).
-#  L'esperimento si seleziona DA CLI: --config config-dev.json --config experiment.json
-#    (Hyperliquid, validazione finale)  oppure  --config experiment-binance.json (proxy sviluppo).
+#  Esperimento da CLI:
+#    HL (validazione finale):  --config config-dev.json --config experiment-hyperliquid.json
+#    Binance (proxy sviluppo): --config config-dev.json --config experiment-binance.json
 #  --strategy NON serve: lo legge l'experiment (CLI --strategy = override opzionale).
+#  Negli experiment, "strategy" deve essere il nome classe REALE (non "Strategy_name").
 #  srv-dev = runner: usa `run --rm`. MAI `compose run` su servizi live.
-#  Timerange HL derivati dalla coverage reale (seed ~2025-08→2026-05, +refresh a oggi).
+#  One-liner python/sh: usa --entrypoint python / --entrypoint sh (entrypoint immagine = freqtrade).
+#  Timerange HL dalla coverage reale (seed ~2025-08→2026-05 + refresh a oggi).
 # ═══════════════════════════════════════════════════════════════
 
 # ── 0 · verify / ispezione (HL) ────────────────────────────────
-docker compose run --rm srv-dev show-config --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json
-docker compose run --rm srv-dev test-pairlist --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json -v
-docker compose run --rm srv-dev list-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 15m --show-timerange
+docker compose run --rm srv-dev show-config --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json
+docker compose run --rm srv-dev test-pairlist --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json -v
+docker compose run --rm srv-dev list-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timeframes 15m --show-timerange
 docker compose run --rm --entrypoint python srv-dev -m freqtrade.ohlcv_cache.healthcheck --socket /ftcache/ftcache.sock
 
 # ── 1 · download-data (scrive in shared/data via mount dev) ────
 # HL refresh forward (append recenti): PRIMARIO col seed già presente
-docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 15m 5m 1h
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timeframes 15m 5m 1h
 # HL probe 1m (retention): una coppia sola, non alla cieca
-docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --pairs BTC/USDC:USDC --timeframes 1m --timerange 20261001-
-# NB: --prepend NON estende indietro a 15m/5m/1m (API ~5000 candele). Per storia profonda: proxy Binance o S3/provider.
+docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --pairs BTC/USDC:USDC --timeframes 1m --timerange 20261001-
+# NB: --prepend NON estende indietro a 15m/5m/1m (API ~5000 candele). Storia profonda: proxy Binance o S3/provider.
 # NB: futures scarica anche funding (HL 1h / Binance 8h) + mark. NON disabilitare ftcache.
 
 # ── 2 · coverage (inline, per venue) ───────────────────────────
 docker compose run --rm --entrypoint python srv-dev -c "import pandas as pd,glob; fs=glob.glob('/freqtrade/user_data/data/hyperliquid/futures/*-15m-futures.feather'); print('HL coppie 15m:',len(fs)); df=pd.read_feather(fs[0]); print('esempio:',df['date'].min(),df['date'].max(),len(df))"
+docker compose run --rm --entrypoint python srv-dev -c "import pandas as pd,glob; fs=glob.glob('/freqtrade/user_data/data/binance/futures/*-15m-futures.feather'); print('Binance coppie 15m:',len(fs)); df=pd.read_feather(fs[0]); print('esempio:',df['date'].min(),df['date'].max(),len(df))"
 # gate N>=100 indipendenti: si valuta sui risultati/cluster, non sulle coppie grezze
 
 # ── 3 · backtesting HL (validazione finale; fee taker reale) ───
-docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timerange 20250901-20261101 --timeframe-detail 1m --fee 0.000432
+docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timerange 20250901-20261101 --timeframe-detail 1m --fee 0.000432
 # fallback 5m (ottimista → dichiararlo nel report)
-docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timerange 20250901-20261101 --timeframe-detail 5m --fee 0.000432
+docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timerange 20250901-20261101 --timeframe-detail 5m --fee 0.000432
 
 # ── 4 · bias check HL PRIMA di fidarsi ─────────────────────────
-docker compose run --rm srv-dev lookahead-analysis --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timerange 20250901-20261101
-docker compose run --rm srv-dev recursive-analysis --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timerange 20250901-20261101
+docker compose run --rm srv-dev lookahead-analysis --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timerange 20250901-20261101
+docker compose run --rm srv-dev recursive-analysis --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timerange 20250901-20261101
 
 # ── 5 · hyperopt HL (TRAIN, non holdout; PlateauSampler; delete .json co-located) ──
-docker compose run --rm srv-dev hyperopt --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --spaces buy sell roi stoploss --timerange 20250901-20260901 --fee 0.000432
+docker compose run --rm srv-dev hyperopt --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --spaces buy sell roi stoploss --timerange 20250901-20260901 --fee 0.000432
 # NB: niente trailing nativo; loss MoutonMeanRev/Calmar per mean-reversion
 
 # ── 6 · walk-forward HL CPCV + PBO(<0.5) + holdout intoccabile ─
 docker compose run --rm srv-dev walk-forward --help   # conferma i flag wf-* (fork-specific)
-docker compose run --rm srv-dev walk-forward --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --wf-mode cpcv --wf-cpcv-groups 6 --wf-cpcv-test-groups 2 --wf-embargo-days 3 --wf-holdout-months 2 --timerange 20250901-20261101 --fee 0.000432
+docker compose run --rm srv-dev walk-forward --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --wf-mode cpcv --wf-cpcv-groups 6 --wf-cpcv-test-groups 2 --wf-embargo-days 3 --wf-holdout-months 2 --timerange 20250901-20261101 --fee 0.000432
 
 # ── 7 · replay HL (parity live-vs-backtest; MAI per selezionare) ─
-# richiede dry_run_replay in experiment.json:
+# richiede dry_run_replay in experiment-hyperliquid.json:
 #   {automatic_launch:true, start_date:"01/01/2026", end_date:"today", resolution:"1m", reset_db:false}
-docker compose run --rm srv-dev trade --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json
+docker compose run --rm srv-dev trade --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json
 
 # ── 8 · plot HL (opzionale; plot-profit richiede un backtest già eseguito) ──
-docker compose run --rm srv-dev plot-dataframe --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --pairs BTC/USDC:USDC --timerange 20260101-20261101
-docker compose run --rm srv-dev plot-profit --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timerange 20250901-20261101
+docker compose run --rm srv-dev plot-dataframe --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --pairs BTC/USDC:USDC --timerange 20260101-20261101
+docker compose run --rm srv-dev plot-profit --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timerange 20250901-20261101
 
 # ═══════════════════════════════════════════════════════════════
 #  PIPELINE PROXY BINANCE (sviluppo struttura/regime/CPCV su storia profonda)
@@ -62,7 +66,7 @@ docker compose run --rm srv-dev download-data --config /local/sviluppo/config-de
 docker compose run --rm srv-dev backtesting --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-binance.json --timerange 20230101-20261101 --timeframe-detail 1m --fee 0.0005
 docker compose run --rm srv-dev hyperopt --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-binance.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --spaces buy sell roi stoploss --timerange 20230101-20260901 --fee 0.0005
 docker compose run --rm srv-dev walk-forward --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-binance.json --hyperopt-loss MoutonMeanRevHyperOptLoss --sampler PlateauSampler --epochs 250 --wf-mode cpcv --wf-cpcv-groups 6 --wf-cpcv-test-groups 2 --wf-embargo-days 3 --wf-holdout-months 2 --timerange 20230101-20261101 --fee 0.0005
-# transfer gap: confronta performance Binance vs HL sulla stessa logica/finestra comune; se grande, ri-calibra su HL o scarta.
+# transfer gap: confronta Binance vs HL sulla stessa logica/finestra comune; se grande, ri-calibra su HL o scarta.
 
 # ── 9 · fleet ops (bot2 LIVE: mai compose run; logs/backup/kill-switch) ──
 docker logs --tail 100 bot2
