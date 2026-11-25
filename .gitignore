@@ -35,7 +35,8 @@ shared/local/sviluppo/log_*.txt
 # JSON stray (es. params hyperopt co-located): non committare overfit
 shared/local/sviluppo/*.json
 !shared/local/sviluppo/config-dev.json
-!shared/local/sviluppo/experiment.json
+!shared/local/sviluppo/experiment-hyperliquid.json
+!shared/local/sviluppo/experiment-binance.json
 
 # ═══════════════════════════════════════════════════════════════
 #  4 · DATABASE
