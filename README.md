@@ -10,9 +10,9 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 > ⚠️ **Disclaimer**: software educativo. Il trading di criptovalute può portare alla perdita totale
 > del capitale. Usa a tuo rischio.
 
-**Indice**: [1 Servizi](#1-servizi) · [2 Installazione](#2-installazione) · [3 Permessi & UID](#3-permessi--uid) ·
+**Indice**: [1 Servizi](#1-servizi) · [2 Installazione pulita](#2-installazione-pulita) · [3 Permessi & UID](#3-permessi--uid) ·
 [4 Sicurezza](#4-sicurezza) · [5 Aggiornamenti](#5-aggiornamenti) · [6 Manutenzione](#6-manutenzione) ·
-[7 Aggiungere un bot](#7-aggiungere-un-bot-botn)
+[7 Aggiungere un bot](#7-aggiungere-un-bot-botn) · [8 Ricerca](#8-ricerca-rimando-a-commandstxt)
 
 ---
 
@@ -38,14 +38,17 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
   non quello configurato: senza accorgimento mostra "offline" anche col daemon sano. I bot hanno un
   **wrapper entrypoint** che symlinka il default al condiviso (§7). Source of truth: healthcheck CLI (§2.5).
 - **srv-dev** — Task con `docker compose run --rm srv-dev <cmd>` (avvia ftcache se spento).
-  **Mai** `compose run` su un servizio **live**: seconda istanza con stesso DB/wallet.
+  Config ricerca: **base puro** `config-dev.json` + **experiment selezionato da CLI**
+  (`experiment.json` Hyperliquid / `experiment-binance.json` proxy). Comandi completi in
+  `shared/local/sviluppo/commands.txt` (§8). **Mai** `compose run` su un servizio **live**.
 - **Mount strategie** — `:ro` sui live, `:rw` su dev.
 
 ---
 
-## 2. Installazione
+## 2. Installazione pulita
 
 > Comandi bash: su **Windows** in **WSL2**, su Linux/macOS nel terminale.
+> Questa sezione presume una macchina/repo **pulita** (nessun clone preesistente).
 
 ### 2.1 Prerequisiti
 - **Windows**: WSL2 + Docker Desktop ("Use the WSL 2 based engine") + Git.
@@ -68,8 +71,6 @@ docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate
 ```
 - `--filter=blob:none` + sparse-checkout escludono `user_data/data`: clone ~130 MB.
 - Il build esegue `freqtrade install-ui` → **frequi-ultimate latest** baked nell'immagine (§5.2).
-- **Clone esistente full/dirty?** Preserva i dati in `shared/data` (§2.3), poi
-  `mv freqtrade-ultimate freqtrade-ultimate.old`, riclona light, rebuild, e dopo verify `rm -rf …old`.
 
 ### 2.3 Seed storico (~2 GB) in `shared/data` (una tantum)
 Il bundle del fork va **più indietro del limite API 5000 candele**: seedalo con un clone temporaneo,
@@ -143,11 +144,13 @@ done
 
 ls -ln bot2/user_data/config.json bot2/.env
 getfacl -p bot2/user_data/config.json | head
-docker compose run --rm srv-dev sh -c 'touch /freqtrade/user_data/data/.wtest && rm /freqtrade/user_data/data/.wtest && echo write-ok'
+# verify write dev (entrypoint sh, NON freqtrade):
+docker compose run --rm --entrypoint sh srv-dev -c 'touch /freqtrade/user_data/data/.wtest && rm /freqtrade/user_data/data/.wtest && echo write-ok'
 ```
 Regole: **mai** `user:` nel compose; **niente** `chown` sui `.env`; log su **stdout**; dopo nuovi file in
 `shared/local`: `sudo setfacl -R -m "u:${FTUID}:rwX" shared/local`; niente `sudo` quotidiano.
 EACCES su unlink/write → rilancia chown+ACL sulla dir (per unlink conta l'ownership della dir padre).
+Per one-liner python/sh nel runner usa `--entrypoint python` / `--entrypoint sh` (l'entrypoint immagine è `freqtrade`).
 
 ---
 
@@ -320,6 +323,7 @@ Mount `:ro`; pin tag opzionale; config `/nfi-repo/configs/…` invariati.
 - `shared/local`: modifica → reload/restart.
 - Config reale: modifica → restart (live: finestra calma).
 - `.example`: aggiorna senza segreti se cambi struttura.
+- Ricerca: base puro + experiment da CLI; workflow e comandi in `commands.txt` (§8).
 
 ---
 
@@ -336,22 +340,22 @@ Backup auto-al-stop del fork = locale e solo allo stop: serve snapshot a caldo +
 Cadenza: giornaliero + pre-operazioni rischiose.
 
 ### 6.2 Bundle dati: refresh forward e re-seed
-Il bundle in `shared/data` è **statico**: non si aggiorna da solo.
+Il bundle in `shared/data` è **statico**: non si aggiorna da solo. Base puro + experiment da CLI.
 - **Backtest/replay su finestre storiche fisse**: nessun update needed.
 - **Backtest/replay che includono il recente/oggi**: **refresh forward** periodico (append):
   ```bash
-  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h
-  # aggiungi 1m e funding se usi detail/replay:
-  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 1m
+  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 15m 5m 1h
+  # aggiungi 1m se usi detail/replay:
+  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 1m
   ```
   Cadenza: settimanale, o prima di backtest che includono oggi. Il **live non usa il bundle** (ftcache).
-- **Re-seed occasionale** (fork estende bundle: nuove coppie/storia più profonda): temp clone → copia →
-  rm → **ri-refresh forward** (la copia sovrascrive la coda refreshata):
+- **Re-seed occasionale** (fork estende bundle): temp clone → copia → rm → **ri-refresh forward**
+  (la copia sovrascrive la coda refreshata):
   ```bash
   git clone --filter=blob:none https://github.com/titouannwtt/freqtrade-ultimate.git /tmp/ft-seed
   cp -a /tmp/ft-seed/user_data/data/. shared/data/
   rm -rf /tmp/ft-seed
-  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --timeframes 15m 5m 1h
+  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 15m 5m 1h
   ```
 - Verifica profondità:
   ```bash
@@ -379,8 +383,10 @@ df -h
 |---|---|
 | Backtest/replay recente mostra dati vecchi | Bundle statico → refresh forward (§6.2) |
 | Clone pesante / feather dirty | Clone light sparse (§2.2); dati in shared/data |
+| Clone full preesistente da convertire | Preserva dati in shared/data, riclona light (§2.2), rebuild, poi rm del vecchio |
 | `pull --ff-only` abort / forced update | fetch + reset --hard (sparse preservato) |
 | `shared/data` EACCES (unlink/write) | Ownership padre dopo cp -a/sudo → chown+ACL §3 |
+| `run srv-dev sh/python …` errore comando | Entrypoint immagine = freqtrade → usa `--entrypoint sh` / `--entrypoint python` |
 | Seed leftover | `rm -rf /tmp/ft-seed` |
 | Due daemon / budget dimezzato | Socket divergente → allinea `/ftcache/ftcache.sock` |
 | Pannello ftcache offline ma CLI ONLINE | Probe default /tmp; wrapper symlink (§7) |
@@ -442,6 +448,30 @@ docker compose exec -T srv-bot$N python -m freqtrade.ohlcv_cache.healthcheck --s
 ```
 **Go-live**: DB vergine (`tradesv3-live.sqlite`), sizing/leva validati, mount `:ro`, segreti reali.
 Poi `up -d --force-recreate`. **Mai** `compose run` sul live.
+
+---
+
+## 8. Ricerca (rimando a commands.txt)
+
+I comandi di ricerca completi (verify, download, coverage, backtest, bias-check, hyperopt,
+walk-forward, replay, plot, proxy Binance) stanno in **`shared/local/sviluppo/commands.txt`**.
+Struttura config: **`config-dev.json` = base puro** (solo infrastruttura, senza `add_config_files`);
+l'esperimento si seleziona **da CLI**: `--config config-dev.json --config experiment.json`
+(Hyperliquid, validazione finale) oppure `--config experiment-binance.json` (proxy di sviluppo).
+`--strategy` non serve nei comandi: lo legge l'experiment.
+
+Punti fermi (dal workflow e dai gate):
+- **Timerange dalla coverage reale**, non inventati: HL seed ~2025-08→2026-05 + refresh forward a oggi;
+  Binance proxy 2023→oggi (storia profonda). Verifica con `list-data --show-timerange` / coverage inline.
+- **Fee reali** per venue (`--fee 0.000432` HL taker; `0.0005` Binance taker); funding HL orario vs Binance 8h.
+- **Detail 1m** dove presente; else 5m = ottimista, dichiaralo.
+- **Gate**: N≥100 trade indipendenti; payoff vs winrate; max DD; tranche DCA; CPCV PBO<0.5 + holdout
+  intoccabile; placebo/dose-response; bias-check (lookahead/recursive) prima di fidarsi.
+- **Proxy Binance = solo sviluppo struttura/regime**: mai go-live su risultati Binance; validazione
+  finale + replay + economia sempre su Hyperliquid; misura il transfer gap.
+- **Replay** solo HL (parity live-vs-backtest), mai per selezionare parametri.
+- **Storia profonda HL oltre il bundle**: non via `candleSnapshot` (limite ~5000 candele); vie = S3 fills
+  rebuild / provider terzi / intervalli grossi (4h/1d) / self-record. `--prepend` non estende a 15m.
 
 ---
 
