@@ -3,16 +3,19 @@
 Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolamento per-bot
 (config + DB separati) e accesso remoto **solo via Tailscale**.
 
-**Repo privata.** Versiona: infra, strategie, template `.example`, tooling, `.gitignore` e compose
-**già corretti** (il README descrive, non chiede patch manuali ai file committati).
+**Repo privata.** Versiona infra, strategie, template `.example`, tooling, `.gitignore` e compose,
+**già corretti**: il README descrive, non chiede patch manuali ai file committati.
 **Non** versiona: file reali con segreti (`config.json`, `.env`), DB, log, runtime IPC, dati di ricerca, artifact UI.
 
-> ⚠️ **Disclaimer**: software educativo. Il trading di criptovalute può portare alla perdita totale
+> ⚠️ **Disclaimer** — Software educativo. Il trading di criptovalute può portare alla perdita totale
 > del capitale. Usa a tuo rischio.
+
+**In breve** (installazione pulita): clone light del fork → seed dati in `shared/data` → template →
+file reali con segreti → permessi/ACL → `up -d srv-ftcache` poi i bot. Dettagli in §2–§3.
 
 **Indice**: [1 Servizi](#1-servizi) · [2 Installazione pulita](#2-installazione-pulita) · [3 Permessi & UID](#3-permessi--uid) ·
 [4 Sicurezza](#4-sicurezza) · [5 Aggiornamenti](#5-aggiornamenti) · [6 Manutenzione](#6-manutenzione) ·
-[7 Aggiungere un bot](#7-aggiungere-un-bot-botn) · [8 Ricerca](#8-ricerca-rimando-a-commandstxt)
+[7 Aggiungere un bot](#7-aggiungere-un-bot-botn) · [8 Ricerca](#8-ricerca) · [Appendice](#appendice--struttura-della-repo)
 
 ---
 
@@ -25,33 +28,32 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
 | `srv-botN` | Bot live o dry-run | Uno per servizio; config e DB isolati |
 | `srv-dev` | Runner usa-e-getta (download/backtest/replay) | Mai live; niente porte; limiti CPU/RAM |
 
-- **Due magazzini dati** — Bundle ricerca = `./shared/data` (**fuori dal clone git**, ~2 GB, `:ro` sui
-  live, `rw` su dev). Cache live = ftcache (effimera). Il bundle è uno **snapshot statico**: refresh
-  forward periodico in §6.2; il live non lo usa (ftcache fetcha live).
-- **Fork light** — Clone del fork **sparse (~130 MB), senza bundle candele**; i dati vivono solo in
-  `shared/data`. `.dockerignore` del fork esclude `user_data/`: l'immagine non contiene dati.
-- **ftcache** — Socket **unica stringa** `/ftcache/ftcache.sock` in compose (`command` + `healthcheck`
-  di `srv-ftcache`), config di ogni bot e config dev. Se un punto diverge → due daemon, budget
-  dimezzato (split-brain). I bot `depends_on: srv-ftcache {condition: service_healthy}`: se il daemon
-  non parte, i bot restano in attesa.
-- **Pannello stato FreqUI** — Il fork interroga il socket di **default** (`/tmp/ftcache-<uid>.sock`),
-  non quello configurato: senza accorgimento mostra "offline" anche col daemon sano. I bot hanno un
-  **wrapper entrypoint** che symlinka il default al condiviso (§7). Source of truth: healthcheck CLI (§2.5).
-- **srv-dev** — Task con `docker compose run --rm srv-dev <cmd>` (avvia ftcache se spento).
-  Config ricerca: **base puro** `config-dev.json` + **experiment selezionato da CLI**
-  (`experiment.json` Hyperliquid / `experiment-binance.json` proxy). Comandi completi in
-  `shared/local/sviluppo/commands.txt` (§8). **Mai** `compose run` su un servizio **live**.
-- **Mount strategie** — `:ro` sui live, `:rw` su dev.
+- **Due magazzini dati.** Bundle ricerca = `./shared/data` (fuori dal clone git, ~2 GB, `:ro` sui live,
+  `rw` su dev). Cache live = ftcache (effimera). Il bundle è uno **snapshot statico**: refresh forward
+  periodico (§6.2); il live non lo usa (ftcache fetcha live).
+- **Fork light.** Clone sparse (~130 MB) senza bundle candele; i dati vivono solo in `shared/data`.
+  Il `.dockerignore` del fork esclude `user_data/`: l'immagine non contiene dati.
+- **ftcache.** Socket **unica stringa** `/ftcache/ftcache.sock` in compose (`command` + `healthcheck`),
+  config di ogni bot e config dev. Se un punto diverge → due daemon, budget dimezzato (split-brain).
+  I bot hanno `depends_on: srv-ftcache {condition: service_healthy}`: se il daemon non parte, restano in attesa.
+- **Pannello stato FreqUI.** Il fork interroga il socket di **default** (`/tmp/ftcache-<uid>.sock`), non
+  quello configurato: senza accorgimento mostra "offline" anche col daemon sano. I bot hanno un wrapper
+  entrypoint che symlinka il default al condiviso (§7). Source of truth: healthcheck CLI (§2.5).
+- **srv-dev.** Task con `docker compose run --rm srv-dev <cmd>` (avvia ftcache se spento). Config ricerca:
+  **base puro** `config-dev.json` + esperimento da CLI (`experiment-hyperliquid.json` per HL,
+  `experiment-binance.json` per il proxy). Comandi completi in `shared/local/sviluppo/commands.txt` (§8).
+  **Mai** `compose run` su un servizio live.
+- **Mount strategie.** `:ro` sui live, `:rw` su dev.
 
 ---
 
 ## 2. Installazione pulita
 
 > Comandi bash: su **Windows** in **WSL2**, su Linux/macOS nel terminale.
-> Questa sezione presume una macchina/repo **pulita** (nessun clone preesistente).
+> Sezione per macchina/repo **pulita** (nessun clone preesistente).
 
 ### 2.1 Prerequisiti
-- **Windows**: WSL2 + Docker Desktop ("Use the WSL 2 based engine") + Git.
+- **Windows**: WSL2 + Docker Desktop (engine WSL2) + Git.
 - **Linux**: `sudo apt install git docker.io docker-compose-v2 curl acl` +
   `sudo usermod -aG docker $USER && newgrp docker`.
 - **Oracle Always Free**: VM.Standard.A1.Flex, Ubuntu 22.04 ARM, 2 OCPU/12 GB (max 2 VM), boot 200 GB.
@@ -60,7 +62,7 @@ Fleet Docker di bot Freqtrade (fork Ultimate) con cache OHLCV condivisa, isolame
   `chmod 700 ~/.ssh && chmod 600 ~/.ssh/oracle_fleet`. Backup in password manager + USB criptata.
 - **Disco**: seed temporaneo ~2 GB + `shared/data` ~2 GB; verifica `df -h` prima di §2.3.
 
-### 2.2 Clone + build (fork LIGHT)
+### 2.2 Clone + build (fork light)
 ```bash
 git clone <repo-privata> trading-fleet && cd trading-fleet        # auth: SSH key o PAT
 git clone https://github.com/iterativv/NostalgiaForInfinity.git shared/NostalgiaForInfinity
@@ -72,9 +74,9 @@ docker build --platform linux/$(dpkg --print-architecture) -t freqtrade-ultimate
 - `--filter=blob:none` + sparse-checkout escludono `user_data/data`: clone ~130 MB.
 - Il build esegue `freqtrade install-ui` → **frequi-ultimate latest** baked nell'immagine (§5.2).
 
-### 2.3 Seed storico (~2 GB) in `shared/data` (una tantum)
-Il bundle del fork va **più indietro del limite API 5000 candele**: seedalo con un clone temporaneo,
-poi eliminalo. Il clone principale resta light. I refresh periodici sono **solo** in §6.2.
+### 2.3 Seed storico (~2 GB) in `shared/data` — una tantum
+Il bundle del fork va più indietro del limite API (~5000 candele): seedalo con un clone temporaneo,
+poi eliminalo. Il clone principale resta light. I refresh periodici sono solo in §6.2.
 ```bash
 mkdir -p shared/data
 git clone --filter=blob:none https://github.com/titouannwtt/freqtrade-ultimate.git /tmp/ft-seed   # ~2 GB, con dati
@@ -94,8 +96,8 @@ chmod 600 .env.shared bot*/.env dev/.env
 ```
 Riempi i **reali** (mai i `.example`):
 - `.env.shared`: `TZ=UTC` (dati/funding/candele sono UTC), `TELEGRAM__CHAT_ID`, `FIAT_DISPLAY_CURRENCY`.
-- `botN/.env`: `TELEGRAM__TOKEN` + `API_SERVER__USERNAME/PASSWORD/WS_TOKEN/JWT_SECRET_KEY` **univoci
-  per bot** (`openssl rand -hex 32`, `-base64 24`), mai vuoti.
+- `botN/.env`: `TELEGRAM__TOKEN` + `API_SERVER__USERNAME/PASSWORD/WS_TOKEN/JWT_SECRET_KEY` **univoci per
+  bot** (`openssl rand -hex 32`, `-base64 24`), mai vuoti.
 - `dev/.env`: solo API/Telegram se servono; **nessuna chiave live**.
 - **Hyperliquid**: `walletAddress`/`privateKey` (camelCase) nel `config.json` reale, **non** in `.env`
   (il loader env lowercase-a le chiavi → 422 al init).
@@ -120,7 +122,7 @@ docker compose exec -T srv-bot2 python -m freqtrade.ohlcv_cache.healthcheck --so
 ## 3. Permessi & UID
 
 UID **non fissi** (Oracle `opc`=1000 sposta `ubuntu`=1001; `ftuser` varia): rilevali sempre.
-Pre-crea le dir con ownership+ACL (Docker crea i bind-mount mancanti come **root**).
+Pre-crea le dir con ownership+ACL (Docker crea i bind-mount mancanti come root).
 `cp -a` (seed) preserva ownership misti: normalizza con `chown -R` (incluso `shared/data`),
 altrimenti unlink/write da host danno **EACCES**.
 
@@ -147,10 +149,12 @@ getfacl -p bot2/user_data/config.json | head
 # verify write dev (entrypoint sh, NON freqtrade):
 docker compose run --rm --entrypoint sh srv-dev -c 'touch /freqtrade/user_data/data/.wtest && rm /freqtrade/user_data/data/.wtest && echo write-ok'
 ```
-Regole: **mai** `user:` nel compose; **niente** `chown` sui `.env`; log su **stdout**; dopo nuovi file in
-`shared/local`: `sudo setfacl -R -m "u:${FTUID}:rwX" shared/local`; niente `sudo` quotidiano.
-EACCES su unlink/write → rilancia chown+ACL sulla dir (per unlink conta l'ownership della dir padre).
-Per one-liner python/sh nel runner usa `--entrypoint python` / `--entrypoint sh` (l'entrypoint immagine è `freqtrade`).
+Regole:
+- **Mai** `user:` nel compose; **niente** `chown` sui `.env`; log su **stdout**.
+- Dopo nuovi file in `shared/local`: `sudo setfacl -R -m "u:${FTUID}:rwX" shared/local`.
+- Niente `sudo` nell'operatività quotidiana.
+- EACCES su unlink/write → rilancia chown+ACL sulla dir (per unlink conta l'ownership della dir padre).
+- One-liner python/sh nel runner: `--entrypoint python` / `--entrypoint sh` (entrypoint immagine = `freqtrade`).
 
 ---
 
@@ -270,6 +274,8 @@ docker compose config >/dev/null && echo compose-ok
 ```
 **Manuale (exchange/wallet)**: API key senza withdraw + IP whitelist + read/trade + una per bot + 2FA;
 Hyperliquid API agent + vault/subaccount; ruota JWT/ws/password periodicamente e dopo esposizioni.
+**Repo resa pubblica**: i segreti eventualmente committati in passato restano in history → ruota e
+purga (filter-repo/BFG) o ricrea la repo prima di esporla definitivamente.
 
 ---
 
@@ -294,7 +300,7 @@ docker compose up -d --force-recreate srv-ftcache srv-bot1 srv-bot2   # finestra
 ### 5.2 FreqUI Ultimate
 **Via primaria = rebuild** (§5.1): install-ui fetcha frequi-ultimate latest → baked. Hard-refresh
 (Ctrl+Shift+R); verifica footer/about.
-**Alternativa senza rebuild** (zip + mount, solo se dir popolata; mount vuoto nasconde la baked):
+**Alternativa senza rebuild** (zip + mount, solo se dir popolata; un mount vuoto nasconde la baked):
 ```bash
 VER=v2.2.1
 mkdir -p shared/frequi/installed
@@ -317,13 +323,13 @@ docker compose restart srv-bot1     # dry: sicuro; live: finestra calma
 # o Telegram /reload_config
 ```
 Mount `:ro`; pin tag opzionale; config `/nfi-repo/configs/…` invariati.
-⚠️ NFI lookahead bias: metriche backtest non credibili come prova di edge.
+⚠️ NFI ha lookahead bias documentato: metriche di backtest non credibili come prova di edge.
 
 ### 5.4 Strategie locali, config, template
-- `shared/local`: modifica → reload/restart.
+- `shared/local`: modifica → reload/restart del bot che le usa.
 - Config reale: modifica → restart (live: finestra calma).
 - `.example`: aggiorna senza segreti se cambi struttura.
-- Ricerca: base puro + experiment da CLI; workflow e comandi in `commands.txt` (§8).
+- Ricerca: base puro + esperimento da CLI; workflow e comandi in `commands.txt` (§8).
 
 ---
 
@@ -336,26 +342,26 @@ docker compose exec -T srv-bot2 python -c "import sqlite3;s=sqlite3.connect('fil
 mv bot2/user_data/tradesv3-backup.sqlite backups/bot2-$(date +%Y%m%d).sqlite
 find backups -name 'bot2-*.sqlite' -mtime +7 -delete
 ```
-Backup auto-al-stop del fork = locale e solo allo stop: serve snapshot a caldo + rotazione + offsite.
+Il backup auto-al-stop del fork è locale e solo allo stop: serve snapshot a caldo + rotazione + offsite.
 Cadenza: giornaliero + pre-operazioni rischiose.
 
 ### 6.2 Bundle dati: refresh forward e re-seed
-Il bundle in `shared/data` è **statico**: non si aggiorna da solo. Base puro + experiment da CLI.
-- **Backtest/replay su finestre storiche fisse**: nessun update needed.
-- **Backtest/replay che includono il recente/oggi**: **refresh forward** periodico (append):
+Il bundle in `shared/data` è **statico**: non si aggiorna da solo. Base puro + esperimento da CLI.
+- **Backtest/replay su finestre storiche fisse**: nessun update necessario.
+- **Backtest/replay che includono il recente/oggi**: refresh forward periodico (append):
   ```bash
-  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 15m 5m 1h
+  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timeframes 15m 5m 1h
   # aggiungi 1m se usi detail/replay:
-  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 1m
+  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timeframes 1m
   ```
-  Cadenza: settimanale, o prima di backtest che includono oggi. Il **live non usa il bundle** (ftcache).
-- **Re-seed occasionale** (fork estende bundle): temp clone → copia → rm → **ri-refresh forward**
+  Cadenza: settimanale, o prima di backtest che includono oggi. Il live non usa il bundle (ftcache).
+- **Re-seed occasionale** (fork estende bundle): temp clone → copia → rm → ri-refresh forward
   (la copia sovrascrive la coda refreshata):
   ```bash
   git clone --filter=blob:none https://github.com/titouannwtt/freqtrade-ultimate.git /tmp/ft-seed
   cp -a /tmp/ft-seed/user_data/data/. shared/data/
   rm -rf /tmp/ft-seed
-  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment.json --timeframes 15m 5m 1h
+  docker compose run --rm srv-dev download-data --config /local/sviluppo/config-dev.json --config /local/sviluppo/experiment-hyperliquid.json --timeframes 15m 5m 1h
   ```
 - Verifica profondità:
   ```bash
@@ -375,7 +381,7 @@ df -h
 | `backups/` | 7 giornalieri + 4 settimanali + offsite |
 | `dev/user_data/*results/` | Prune periodico |
 | `shared/data/` | Refresh forward periodico (§6.2); re-seed raro; prune finestre inutili; offsite se vuoi versionare |
-| Log | Rototati (10m×3) |
+| Log | Rototati (json-file 10m×3) |
 | Cache ftcache | Effimera, azzerabile a daemon fermo. **Non** è il bundle |
 | Disco | `df -h`: disk-full su live = write SQLite falliti |
 
@@ -386,7 +392,7 @@ df -h
 | Clone full preesistente da convertire | Preserva dati in shared/data, riclona light (§2.2), rebuild, poi rm del vecchio |
 | `pull --ff-only` abort / forced update | fetch + reset --hard (sparse preservato) |
 | `shared/data` EACCES (unlink/write) | Ownership padre dopo cp -a/sudo → chown+ACL §3 |
-| `run srv-dev sh/python …` errore comando | Entrypoint immagine = freqtrade → usa `--entrypoint sh` / `--entrypoint python` |
+| `run srv-dev sh/python …` errore comando | Entrypoint immagine = freqtrade → `--entrypoint sh` / `--entrypoint python` |
 | Seed leftover | `rm -rf /tmp/ft-seed` |
 | Due daemon / budget dimezzato | Socket divergente → allinea `/ftcache/ftcache.sock` |
 | Pannello ftcache offline ma CLI ONLINE | Probe default /tmp; wrapper symlink (§7) |
@@ -397,7 +403,7 @@ df -h
 | ftpairlist offline | Idle 900s normale |
 | Bot in attesa | depends_on ftcache non healthy |
 | FreqUI non apre | serve status + CORS + porta |
-| segreti in git | rm --cached + ruota |
+| segreti in git | rm --cached + ruota (+ purge history se pubblica) |
 | WAL enorme / disk-full | Checkpoint calma; libera; offsite |
 
 ---
@@ -451,18 +457,21 @@ Poi `up -d --force-recreate`. **Mai** `compose run` sul live.
 
 ---
 
-## 8. Ricerca (rimando a commands.txt)
+## 8. Ricerca
 
-I comandi di ricerca completi (verify, download, coverage, backtest, bias-check, hyperopt,
-walk-forward, replay, plot, proxy Binance) stanno in **`shared/local/sviluppo/commands.txt`**.
-Struttura config: **`config-dev.json` = base puro** (solo infrastruttura, senza `add_config_files`);
-l'esperimento si seleziona **da CLI**: `--config config-dev.json --config experiment.json`
-(Hyperliquid, validazione finale) oppure `--config experiment-binance.json` (proxy di sviluppo).
-`--strategy` non serve nei comandi: lo legge l'experiment.
+I comandi completi (verify, download, coverage, backtest, bias-check, hyperopt, walk-forward, replay,
+plot, proxy Binance) stanno in **`shared/local/sviluppo/commands.txt`**.
 
-Punti fermi (dal workflow e dai gate):
-- **Timerange dalla coverage reale**, non inventati: HL seed ~2025-08→2026-05 + refresh forward a oggi;
-  Binance proxy 2023→oggi (storia profonda). Verifica con `list-data --show-timerange` / coverage inline.
+Struttura config:
+- **`config-dev.json` = base puro** (solo infrastruttura, senza `add_config_files`).
+- Esperimento da CLI: `--config config-dev.json --config experiment-hyperliquid.json` (HL, validazione
+  finale) oppure `--config experiment-binance.json` (proxy di sviluppo).
+- `--strategy` non serve nei comandi: lo legge l'esperimento. Negli experiment, `"strategy"` deve essere
+  il nome classe **reale** del file `.py` in `sviluppo/` (non un placeholder).
+
+Punti fermi:
+- **Timerange dalla coverage reale**, non inventati: HL seed ~2025-08→2026-05 + refresh a oggi;
+  Binance proxy 2023→oggi. Verifica con `list-data --show-timerange` / coverage inline.
 - **Fee reali** per venue (`--fee 0.000432` HL taker; `0.0005` Binance taker); funding HL orario vs Binance 8h.
 - **Detail 1m** dove presente; else 5m = ottimista, dichiaralo.
 - **Gate**: N≥100 trade indipendenti; payoff vs winrate; max DD; tranche DCA; CPCV PBO<0.5 + holdout
@@ -470,12 +479,42 @@ Punti fermi (dal workflow e dai gate):
 - **Proxy Binance = solo sviluppo struttura/regime**: mai go-live su risultati Binance; validazione
   finale + replay + economia sempre su Hyperliquid; misura il transfer gap.
 - **Replay** solo HL (parity live-vs-backtest), mai per selezionare parametri.
-- **Storia profonda HL oltre il bundle**: non via `candleSnapshot` (limite ~5000 candele); vie = S3 fills
+- **Storia profonda HL oltre il bundle**: non via `candleSnapshot` (~5000 candele); vie = S3 fills
   rebuild / provider terzi / intervalli grossi (4h/1d) / self-record. `--prepend` non estende a 15m.
+
+---
+
+## Appendice · Struttura della repo
+
+```text
+trading-fleet/
+├── docker-compose.yml          # flotta: ftcache, dev, botN (wrapper symlink)
+├── .gitignore                  # segreti/runtime/dati ignorati; template negati
+├── .env.shared.example         # non-segreti comuni (TZ, chat_id, fiat)
+├── README.md
+├── bot1/
+│   ├── .env.example            # segreti per-bot (placeholder)
+│   └── user_data/config.example.json
+├── bot2/
+│   ├── .env.example
+│   └── user_data/config.example.json
+├── dev/
+│   └── .env.example
+└── shared/
+    └── local/
+        ├── <Strategia>/…       # strategia live (fuori scope di questo doc)
+        └── sviluppo/
+            ├── config-dev.json             # base puro
+            ├── experiment-hyperliquid.json # esperimento HL (validazione finale)
+            ├── experiment-binance.json     # esperimento proxy (sviluppo)
+            └── commands.txt                # comandi ricerca + fleet ops
+```
+Locali / ignorati (non in repo): `config.json` e `.env` reali, DB, log, `shared/run/`, `shared/data/`,
+`shared/frequi/`, `dev/user_data/`, `backups/`, cloni esterni (`freqtrade-ultimate/`, `shared/NostalgiaForInfinity/`).
 
 ---
 
 ## Risorse
 - [Freqtrade](https://www.freqtrade.io/) · [Freqtrade Ultimate](https://github.com/titouannwtt/freqtrade-ultimate)
 - [FreqUI Ultimate](https://github.com/titouannwtt/frequi-ultimate/releases) · [NFI](https://github.com/iterativv/NostalgiaForInfinity)
-- [Tailscale](https://tailscale.com/kb/) · [Oracle Free](https://www.oracle.com/cloud/free/)
+- [Tailscale](https://tailscale.com/kb/) · [Oracle Cloud Free](https://www.oracle.com/cloud/free/)
